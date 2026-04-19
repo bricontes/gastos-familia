@@ -1,7 +1,5 @@
-// Gemini Free API helper
-// Model: gemini-2.0-flash (free tier: 1500 req/day)
-
-const GEMINI_MODEL = 'gemini-2.0-flash'
+// Gemini Free API helper — tries multiple models in order
+const GEMINI_MODELS = ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash']
 
 function getKey() {
   return localStorage.getItem('gemini_api_key')
@@ -15,55 +13,75 @@ async function callGemini(prompt, systemPrompt) {
   const key = getKey()
   if (!key) throw new Error('NO_API_KEY')
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
-      })
+  let lastError = null
+  for (const model of GEMINI_MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+          })
+        }
+      )
+      const data = await res.json()
+      if (data.error) {
+        lastError = data.error.message
+        continue
+      }
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    } catch (e) {
+      lastError = e.message
     }
-  )
-  const data = await res.json()
-  if (data.error) throw new Error(data.error.message)
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  }
+  throw new Error(lastError || 'Todos los modelos fallaron')
 }
 
-// For PDFs: send as inline base64 data
 async function callGeminiWithPDF(base64, mimeType, prompt, systemPrompt) {
   const key = getKey()
   if (!key) throw new Error('NO_API_KEY')
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{
-          parts: [
-            { inline_data: { mime_type: mimeType, data: base64 } },
-            { text: prompt }
-          ]
-        }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
-      })
+  let lastError = null
+  for (const model of GEMINI_MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{
+              parts: [
+                { inline_data: { mime_type: mimeType, data: base64 } },
+                { text: prompt }
+              ]
+            }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
+          })
+        }
+      )
+      const data = await res.json()
+      if (data.error) {
+        lastError = data.error.message
+        continue
+      }
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    } catch (e) {
+      lastError = e.message
     }
-  )
-  const data = await res.json()
-  if (data.error) throw new Error(data.error.message)
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  }
+  throw new Error(lastError || 'Todos los modelos fallaron')
 }
 
 function parseJSON(raw) {
   try {
     return JSON.parse(raw.replace(/```json|```/g, '').trim())
   } catch {
-    // Try to extract JSON array from text
     const match = raw.match(/\[[\s\S]*\]/)
     if (match) return JSON.parse(match[0])
     return []
