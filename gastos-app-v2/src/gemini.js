@@ -56,33 +56,48 @@ function parseJSON(raw) {
   catch { const m = raw.match(/\[[\s\S]*\]/); if (m) return JSON.parse(m[0]); return [] }
 }
 
-export async function parseChat(text, categories) {
+export async function parseChat(text, categories, obraCats = []) {
   const sys = `Sos un asistente que parsea mensajes de gastos e ingresos del hogar argentino.
 Respondé SOLO con JSON array válido, sin markdown ni texto extra.
 
 Tipos posibles:
 
 1. GASTO SIMPLE: { "type": "gasto", "amount": número, "description": string, "category": string }
+   - El campo "description" es el DETALLE del gasto (no la categoría). Ejemplos:
+     "$10.000 salud corte bri" → category="Salud y belleza", description="corte bri"
+     "$1500 obra flete" → category="Obra", description="flete"
+     "$14.000 pizza" → category="Comida", description="pizza"
+     "$8.300 súper" → category="Comida", description="súper"
+   - Si el texto menciona "obra" como categoría → type="obra_pesos" (ver abajo)
 
-2. GASTO POR MAMÁ EN PESOS: { "type": "gasto_mama_pesos", "amount": número, "description": string }
+2. GASTO OBRA EN PESOS: { "type": "obra_pesos", "amount": número, "description": string, "obra_category": string }
+   - Cuando el gasto es para la obra y está en pesos
+   - Se pedirá cotización para convertir a USD y registrar en la sección Obra
+   - También se registra como egreso en pesos en el mes
+   - obra_category debe ser una de: ${obraCats.length ? obraCats.join(', ') : 'Materiales, Mano de obra, Dirección de obra, Mobiliario/equipamiento, Otro'}
+   - Si el usuario no especifica categoría de obra, dejá obra_category="" para que el bot la pregunte
+   - Ejemplos: "$150.000 obra flete" → type=obra_pesos, description="flete", obra_category="Materiales"
+               "$50.000 obra albañil" → type=obra_pesos, description="albañil", obra_category="Mano de obra"
+
+3. GASTO POR MAMÁ EN PESOS: { "type": "gasto_mama_pesos", "amount": número, "description": string }
    - Cuando gastás pesos propios por ella: transferencias, pagos, compras para ella
    - La deuda de mamá es en USD, así que se pedirá la cotización al usuario
    - Ejemplos: "le pasé $150.000 a mami", "$50.000 farmacia mamá", "pagué $80.000 municipal mamá"
 
-3. INGRESO PESOS: { "type": "ingreso", "amount": número, "description": string }
+4. INGRESO PESOS: { "type": "ingreso", "amount": número, "description": string }
 
-4. CAMBIO USD: { "type": "usd", "usd_amount": número, "peso_amount": número, "exchange_rate": número, "description": string }
+5. CAMBIO USD: { "type": "usd", "usd_amount": número, "peso_amount": número, "exchange_rate": número, "description": string }
    - usd_amount positivo = recibiste USD, negativo = vendiste USD
 
-5. PAGO DEUDA MAMÁ EN USD: { "type": "mama_pago_usd", "usd_amount": número, "description": string }
+6. PAGO DEUDA MAMÁ EN USD: { "type": "mama_pago_usd", "usd_amount": número, "description": string }
    - Mamá te paga su deuda en USD → resta de su deuda Y suma a caja USD
-   - Ejemplos: "+ usd 1000 alquiler chinos mama", "+ usd 500 mama"
 
 Reglas:
 - "+ usd X ... mama" → type=mama_pago_usd
 - "+ usd X ..." sin mama → type=usd con usd_amount positivo
 - "Cambio a XXXX -usd N +$M" → type=usd
 - Cualquier gasto en pesos mencionando mamá/mami → type=gasto_mama_pesos
+- Gasto mencionando "obra" como destino → type=obra_pesos
 - Resto de gastos → type=gasto con category de la lista
 
 Categorías para gastos normales: ${categories.join(', ')}`
