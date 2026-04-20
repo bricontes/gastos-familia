@@ -31,38 +31,48 @@ export default function App() {
 
   useEffect(()=>{
     ;(async()=>{
-      const [cats,hidden,txs,ings,usd,obra,mama]=await Promise.all([
-        db.getCategories(DEFAULT_CATEGORIES),
-        db.getHiddenSections(),
-        db.getTransactions(),
-        db.getIngresos(),
-        db.getUSDMovements(),
-        db.getObraMovements(),
-        db.getMamaMovements(),
-      ])
-      setCategories(cats); setHiddenSections(hidden||[]); setTransactions(txs)
-      setIngresos(ings); setUSDMov(usd); setObraMov(obra); setMamaMov(mama)
-      setReady(true)
+      try {
+        const [cats,hidden,txs,ings,usd,obra,mama]=await Promise.all([
+          db.getCategories(DEFAULT_CATEGORIES),
+          db.getHiddenSections(),
+          db.getTransactions(),
+          db.getIngresos(),
+          db.getUSDMovements(),
+          db.getObraMovements(),
+          db.getMamaMovements(),
+        ])
+        setCategories(cats||DEFAULT_CATEGORIES)
+        setHiddenSections(hidden||[])
+        setTransactions(txs||[])
+        setIngresos(ings||[])
+        setUSDMov(usd||[])
+        setObraMov(obra||[])
+        setMamaMov(mama||[])
+      } catch(e) {
+        console.error('Error loading data:', e)
+      } finally {
+        setReady(true)
+      }
     })()
   },[])
 
-  if (!ready) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#0f0f0f',color:'#444',fontFamily:'Georgia,serif'}}>Cargando...</div>
+  if (!ready) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#0f0f0f',color:'#444',fontFamily:'Georgia,serif',fontSize:'0.9rem',letterSpacing:'0.1em'}}>Cargando...</div>
   if (!hasGeminiKey()) return <SetupScreen onDone={()=>window.location.reload()} />
 
-  const isHidden = (s) => hiddenSections.includes(s)
+  const isHidden = s => hiddenSections.includes(s)
   const p={transactions,setTransactions,ingresos,setIngresos,usdMovements,setUSDMov,obraMovements,setObraMov,mamaMovements,setMamaMov,categories,setCategories,hiddenSections,setHiddenSections,selectedMonth,setSelectedMonth,isHidden}
 
   return (
     <div style={{minHeight:'100vh',background:'#0f0f0f',color:'#e8dcc8',fontFamily:'Georgia,serif',paddingBottom:'72px'}}>
-      {view==='home'&&<HomeView {...p} setView={setView}/>}
-      {view==='chat'&&<ChatView {...p}/>}
-      {view==='monthly'&&<MonthlyView {...p}/>}
-      {view==='usd'&&<USDView {...p}/>}
-      {view==='obra'&&!isHidden('obra')&&<ObraView {...p}/>}
-      {view==='obra'&&isHidden('obra')&&<HiddenSection name="Obra Libertad" onBack={()=>setView('home')}/>}
-      {view==='mama'&&!isHidden('mama')&&<MamaView {...p}/>}
-      {view==='mama'&&isHidden('mama')&&<HiddenSection name="Cuenta Mamá" onBack={()=>setView('home')}/>}
-      {view==='settings'&&<SettingsView {...p}/>}
+      {view==='home'     && <HomeView     {...p} setView={setView}/>}
+      {view==='chat'     && <ChatView     {...p}/>}
+      {view==='monthly'  && <MonthlyView  {...p}/>}
+      {view==='usd'      && <USDView      {...p}/>}
+      {view==='obra'     && !isHidden('obra') && <ObraView  {...p}/>}
+      {view==='obra'     &&  isHidden('obra') && <HiddenSection name="Obra Libertad" onBack={()=>setView('home')}/>}
+      {view==='mama'     && !isHidden('mama') && <MamaView  {...p}/>}
+      {view==='mama'     &&  isHidden('mama') && <HiddenSection name="Cuenta Mamá"   onBack={()=>setView('home')}/>}
+      {view==='settings' && <SettingsView {...p}/>}
       <BottomNav view={view} setView={setView} isHidden={isHidden}/>
     </div>
   )
@@ -80,14 +90,13 @@ function SetupScreen({onDone}){
         <div style={{textAlign:'center',marginBottom:'28px'}}>
           <div style={{fontSize:'0.65rem',letterSpacing:'0.2em',color:'#555',textTransform:'uppercase',marginBottom:'8px'}}>Configuración inicial</div>
           <h1 style={{fontSize:'1.9rem',fontWeight:'normal',color:'#e8dcc8',margin:'0 0 10px'}}>Gastos Familia</h1>
-          <p style={{color:'#555',fontSize:'0.85rem',lineHeight:1.6,margin:0}}>Necesitás una API key de Google Gemini.<br/>Es gratis — 1500 consultas por día.</p>
+          <p style={{color:'#555',fontSize:'0.85rem',lineHeight:1.6,margin:0}}>Necesitás una API key de Google Gemini.<br/>Conseguila gratis en aistudio.google.com</p>
         </div>
         <div style={{...S.card,padding:'22px'}}>
           <label style={{...S.label,display:'block',marginBottom:'8px'}}>Google Gemini API Key</label>
           <input type="password" placeholder="AIzaSy..." value={key} onChange={e=>setKey(e.target.value)} onKeyDown={e=>e.key==='Enter'&&save()} style={{...S.input,marginBottom:'14px',fontFamily:'monospace'}}/>
           <button onClick={save} style={{...S.btnGold,width:'100%',padding:'12px'}}>Guardar y comenzar</button>
         </div>
-        <p style={{color:'#333',fontSize:'0.72rem',marginTop:'16px',textAlign:'center',lineHeight:1.6}}>Conseguí tu key en <span style={{color:'#555'}}>aistudio.google.com</span></p>
       </div>
     </div>
   )
@@ -95,10 +104,10 @@ function SetupScreen({onDone}){
 
 function HiddenSection({name,onBack}){
   return (
-    <div style={{padding:'40px 20px',textAlign:'center'}}>
+    <div style={{padding:'60px 20px',textAlign:'center'}}>
       <div style={{fontSize:'2rem',marginBottom:'16px'}}>🔒</div>
-      <div style={{color:'#555',marginBottom:'8px',fontSize:'0.9rem'}}>{name}</div>
-      <div style={{color:'#444',fontSize:'0.8rem',marginBottom:'24px'}}>Esta sección está oculta.<br/>Podés reactivarla desde Configuración.</div>
+      <div style={{color:'#555',marginBottom:'8px'}}>{name} está oculta</div>
+      <div style={{color:'#444',fontSize:'0.8rem',marginBottom:'24px'}}>Podés reactivarla desde Configuración.</div>
       <button onClick={onBack} style={S.btnGray}>← Volver</button>
     </div>
   )
@@ -110,17 +119,17 @@ function BottomNav({view,setView,isHidden}){
     {id:'chat',icon:'✦',label:'Registrar'},
     {id:'monthly',icon:'◈',label:'Mes'},
     {id:'usd',icon:'$',label:'USD'},
-    {id:'obra',icon:'⚒',label:'Obra',hideable:true},
-    {id:'mama',icon:'♡',label:'Mamá',hideable:true},
+    {id:'obra',icon:'⚒',label:'Obra',opt:true},
+    {id:'mama',icon:'♡',label:'Mamá',opt:true},
     {id:'settings',icon:'⚙',label:'Config'},
   ]
   return (
-    <nav style={{position:'fixed',bottom:0,left:0,right:0,background:'#141414',borderTop:'1px solid #1e1e1e',display:'flex',zIndex:100,paddingBottom:'env(safe-area-inset-bottom)',overflowX:'auto'}}>
+    <nav style={{position:'fixed',bottom:0,left:0,right:0,background:'#141414',borderTop:'1px solid #1e1e1e',display:'flex',zIndex:100,paddingBottom:'env(safe-area-inset-bottom)'}}>
       {items.map(it=>(
         <button key={it.id} onClick={()=>setView(it.id)}
-          style={{flex:'0 0 auto',minWidth:'48px',padding:'10px 6px 8px',background:'none',border:'none',
-            color:view===it.id?'#c8a96e':it.hideable&&isHidden(it.id)?'#2a2a2a':'#444',
-            cursor:'pointer',fontSize:'0.55rem',letterSpacing:'0.04em',textTransform:'uppercase',
+          style={{flex:1,padding:'10px 2px 8px',background:'none',border:'none',
+            color:view===it.id?'#c8a96e':it.opt&&isHidden(it.id)?'#252525':'#444',
+            cursor:'pointer',fontSize:'0.54rem',letterSpacing:'0.04em',textTransform:'uppercase',
             display:'flex',flexDirection:'column',alignItems:'center',gap:'3px',transition:'color 0.2s'}}>
           <span style={{fontSize:'1rem'}}>{it.icon}</span>{it.label}
         </button>
@@ -130,16 +139,17 @@ function BottomNav({view,setView,isHidden}){
 }
 
 function MiniCard({label,value,color}){
-  return(<div style={S.card}><div style={S.label}>{label}</div><div style={{fontSize:'1.1rem',color,marginTop:'6px'}}>{value}</div></div>)
+  return <div style={S.card}><div style={S.label}>{label}</div><div style={{fontSize:'1.1rem',color,marginTop:'6px'}}>{value}</div></div>
 }
 
 function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMonth,setSelectedMonth,setView,isHidden}){
   const {month,year}=selectedMonth
   const mTxs=transactions.filter(t=>{const d=new Date(t.date);return d.getMonth()===month&&d.getFullYear()===year})
   const mIngs=ingresos.filter(t=>{const d=new Date(t.date);return d.getMonth()===month&&d.getFullYear()===year})
-  const totalG=mTxs.reduce((s,t)=>s+t.amount,0),totalI=mIngs.reduce((s,t)=>s+t.amount,0),bal=totalI-totalG
+  const totalG=mTxs.reduce((s,t)=>s+(t.amount||0),0)
+  const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
+  const bal=totalI-totalG
   const usdTot=usdMovements.reduce((s,m)=>s+(m.usd100||0)+(m.usd_cambio||0),0)
-  // Mama deuda: positivo = le debés vos, negativo = te deben a vos
   const mamaDeuda=mamaMovements.reduce((s,m)=>s+(m.amount||0),0)
   const prev=()=>{const d=new Date(year,month-1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const next=()=>{const d=new Date(year,month+1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
@@ -152,13 +162,13 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}}>
         <MiniCard label="Ingresos" value={fmt(totalI)} color="#6e9e6e"/>
-        <MiniCard label="Gastos" value={fmt(totalG)} color="#c87070"/>
+        <MiniCard label="Gastos"   value={fmt(totalG)} color="#c87070"/>
       </div>
       <div style={{...S.card,background:bal>=0?'#141f14':'#1f1414',borderColor:bal>=0?'#1e3a1e':'#3a1e1e',marginBottom:'12px'}}>
         <div style={S.label}>Balance del mes</div>
         <div style={{fontSize:'1.6rem',color:bal>=0?'#6e9e6e':'#c87070',marginTop:'6px'}}>{fmt(bal)}</div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}}>
+      <div style={{display:'grid',gridTemplateColumns:isHidden('mama')?'1fr':'1fr 1fr',gap:'12px',marginBottom:'22px'}}>
         <div style={S.card}>
           <div style={S.label}>Dólares en caja</div>
           <div style={{fontSize:'1.2rem',color:'#c8a96e',marginTop:'6px'}}>USD {usdTot.toLocaleString('es-AR')}</div>
@@ -166,8 +176,8 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
         {!isHidden('mama')&&(
           <div style={S.card}>
             <div style={S.label}>Deuda mamá</div>
-            <div style={{fontSize:'1.2rem',color:mamaDeuda>=0?'#c87070':'#6e9e6e',marginTop:'6px'}}>{fmt(Math.abs(mamaDeuda))}</div>
-            <div style={{fontSize:'0.65rem',color:'#555',marginTop:'2px'}}>{mamaDeuda>=0?'te debe':'le debés'}</div>
+            <div style={{fontSize:'1.1rem',color:mamaDeuda>0?'#c87070':'#6e9e6e',marginTop:'6px'}}>USD {Math.abs(mamaDeuda).toLocaleString('es-AR',{maximumFractionDigits:2})}</div>
+            <div style={{fontSize:'0.62rem',color:'#555',marginTop:'2px'}}>{mamaDeuda>0?'te debe':'le debés'}</div>
           </div>
         )}
       </div>
@@ -183,109 +193,96 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
   )
 }
 
-function ChatView({categories,transactions,setTransactions,ingresos,setIngresos,usdMovements,setUSDMov,mamaMovements,setMamaMov}){
+// ── CHAT ─────────────────────────────────────────────────────────────
+function ChatView({categories,setTransactions,setIngresos,setUSDMov,setMamaMov}){
   const [input,setInput]=useState('')
-  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $8.300 súper\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• $150.000 le pasé a mami  ← te pregunta cotización y suma a deuda USD\n• + usd 1000 alquiler chinos mama  ← resta deuda + suma caja USD\n\nPodés pegar varias líneas juntas o subir un PDF con 📄'}])
+  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $8.300 súper\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• $150.000 le pasé a mami  ← te pido cotización USD\n• + usd 1000 alquiler chinos mama  ← resta deuda + suma caja USD\n\nPodés pegar varias líneas o subir un PDF con 📄'}])
   const [loading,setLoading]=useState(false)
   const [pending,setPending]=useState([])
-  // Estado para pedir cotización cuando hay gasto_mama_pesos
-  const [waitingCotizacion,setWaitingCotizacion]=useState(false)
-  const [cotizacion,setCotizacion]=useState('')
+  const [waitingCotiz,setWaitingCotiz]=useState(false)
   const bottomRef=useRef(),fileRef=useRef()
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[messages])
-  const addMsg=(role,text,extra)=>setMessages(p=>[...p,{role,text,...extra}])
+  const addMsg=(role,text,extra={})=>setMessages(p=>[...p,{role,text,...extra}])
+
+  const guardar=async(parsed,cotiz)=>{
+    const dateStr=new Date().toISOString().split('T')[0]
+    const gastos=[],usds=[],ings=[],mamas=[]
+    parsed.forEach(t=>{
+      if(t.type==='gasto'){
+        gastos.push({date:dateStr,amount:t.amount||0,category:t.category,description:t.description||''})
+      }
+      else if(t.type==='gasto_mama_pesos'){
+        const monto=t.amount||0
+        gastos.push({date:dateStr,amount:monto,category:'Mamá',description:t.description||''})
+        if(cotiz&&cotiz>0){
+          const usdEquiv=parseFloat((monto/cotiz).toFixed(2))
+          mamas.push({date:dateStr,amount:usdEquiv,description:`${t.description||'Gasto mamá'} ($${monto.toLocaleString('es-AR')} @ $${cotiz})`,type:'gasto_mama'})
+        }
+      }
+      else if(t.type==='ingreso'){
+        ings.push({date:dateStr,amount:t.amount||0,description:t.description||''})
+      }
+      else if(t.type==='usd'){
+        usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate||null,peso_amount:t.peso_amount||null})
+      }
+      else if(t.type==='mama_pago_usd'){
+        const usdAmt=t.usd_amount||0
+        mamas.push({date:dateStr,amount:-usdAmt,description:t.description||'Pago mamá en USD',type:'pago_cuenta'})
+        usds.push({date:dateStr,usd100:usdAmt,usd_cambio:0,description:t.description||'Pago mamá',exchange_rate:null,peso_amount:null})
+      }
+    })
+    if(gastos.length){await db.insertTransactions(gastos);setTransactions(p=>[...p,...gastos])}
+    for(const u of usds){await db.insertUSD(u);setUSDMov(p=>[...p,u])}
+    for(const i of ings){await db.insertIngreso(i);setIngresos(p=>[...p,i])}
+    for(const m of mamas){await db.insertMama(m);setMamaMov(p=>[...p,m])}
+    setPending([]);setWaitingCotiz(false)
+    const mamasPesos=parsed.filter(t=>t.type==='gasto_mama_pesos')
+    if(mamasPesos.length&&cotiz){
+      const resumen=mamasPesos.map(t=>`  • ${fmt(t.amount||0)} = USD ${((t.amount||0)/cotiz).toFixed(2)}`).join('\n')
+      addMsg('assistant',`✓ Guardado.\n\nDeuda mamá sumada (@ $${cotiz}):\n${resumen}`)
+    } else {
+      addMsg('assistant','✓ Guardado correctamente.')
+    }
+  }
 
   const handleSend=async()=>{
     if(!input.trim()||loading)return
-    // Si estamos esperando cotización, procesamos ese input
-    if(waitingCotizacion){
-      const val=parseFloat(input.trim().replace(',','.'))
-      if(!val||val<100){addMsg('assistant','Ingresá una cotización válida (ej: 1400)');setInput('');return}
-      setInput('');setCotizacion(val);setWaitingCotizacion(false)
-      await confirmarConCotizacion(val)
+    const text=input.trim()
+    // Esperando cotización
+    if(waitingCotiz){
+      setInput('')
+      const val=parseFloat(text.replace(',','.'))
+      if(!val||val<100){addMsg('assistant','Ingresá una cotización válida, ej: 1400');return}
+      addMsg('user',text)
+      await guardar(pending,val)
       return
     }
-    const text=input.trim();setInput('');setLoading(true);addMsg('user',text)
+    setInput('');setLoading(true);addMsg('user',text)
     try{
       const parsed=await parseChat(text,categories)
       if(!parsed.length){addMsg('assistant','No pude interpretar ese texto. Intentá de nuevo.');setLoading(false);return}
       setPending(parsed)
-      // Verificar si hay gastos mama en pesos que necesitan cotización
       const tieneMamaPesos=parsed.some(t=>t.type==='gasto_mama_pesos')
       const summary=parsed.map(t=>{
-        if(t.type==='usd')return`💱 Cambio: ${t.usd_amount>0?'+':''}${t.usd_amount} USD @ $${t.exchange_rate} → ${fmt(t.peso_amount)}`
-        if(t.type==='ingreso')return`💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
-        if(t.type==='mama_pago_usd')return`👩💵 Pago mamá en USD:\n   +USD ${t.usd_amount} → Caja USD\n   −USD ${t.usd_amount} → Deuda mamá`
-        if(t.type==='gasto_mama_pesos')return`👩💵 Gasto por mamá: ${fmt(t.amount)} — ${t.description}\n   (necesito la cotización USD para registrar la deuda)`
-        return`📌 ${t.category}: ${fmt(t.amount)} — ${t.description}`
+        if(t.type==='usd')         return `💱 Cambio: ${t.usd_amount>0?'+':''}${t.usd_amount} USD @ $${t.exchange_rate} → ${fmt(t.peso_amount)}`
+        if(t.type==='ingreso')     return `💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
+        if(t.type==='mama_pago_usd') return `👩💵 Pago mamá en USD: +${t.usd_amount} USD\n   → +USD en caja  |  −USD en deuda mamá`
+        if(t.type==='gasto_mama_pesos') return `👩 Gasto por mamá: ${fmt(t.amount)} — ${t.description}\n   (se convertirá a USD según cotización)`
+        return `📌 ${t.category}: ${fmt(t.amount)} — ${t.description}`
       }).join('\n')
       if(tieneMamaPesos){
         addMsg('assistant',`Entendí ${parsed.length} movimiento${parsed.length>1?'s':''}:\n\n${summary}\n\n¿A qué cotización USD registro los gastos de mamá?`)
-        setWaitingCotizacion(true)
+        setWaitingCotiz(true)
       } else {
         addMsg('assistant',`Entendí ${parsed.length} movimiento${parsed.length>1?'s':''}:\n\n${summary}\n\n¿Lo guardo?`,{txs:parsed})
       }
-    }catch(e){addMsg('assistant',e.message==='NO_API_KEY'?'⚠️ Falta la API key de Gemini.':`Error: ${e.message}`)}
+    }catch(e){
+      addMsg('assistant',e.message==='NO_API_KEY'?'⚠️ Falta la API key de Gemini.':`Error: ${e.message}`)
+    }
     setLoading(false)
   }
 
-  const confirmarConCotizacion=async(cotiz)=>{
-    const dateStr=new Date().toISOString().split('T')[0]
-    const gastos=[],usds=[],ings=[],mamas=[]
-    pending.forEach(t=>{
-      if(t.type==='gasto'){
-        gastos.push({date:dateStr,amount:t.amount,category:t.category,description:t.description||''})
-      }
-      if(t.type==='gasto_mama_pesos'){
-        // Registrar como gasto categoría Mamá en pesos
-        gastos.push({date:dateStr,amount:t.amount,category:'Mamá',description:t.description||''})
-        // Convertir a USD y sumar a deuda
-        const usdEquiv=parseFloat((t.amount/cotiz).toFixed(2))
-        mamas.push({date:dateStr,amount:usdEquiv,description:`${t.description||''} ($${t.amount.toLocaleString('es-AR')} @ $${cotiz})`,type:'gasto_mama'})
-      }
-      if(t.type==='ingreso')ings.push({date:dateStr,amount:t.amount,description:t.description||''})
-      if(t.type==='usd')usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate,peso_amount:t.peso_amount})
-      if(t.type==='mama_pago_usd'){
-        mamas.push({date:dateStr,amount:-(t.usd_amount||0),description:t.description||'Pago USD mamá',type:'pago_cuenta'})
-        usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Pago mamá',exchange_rate:null,peso_amount:null})
-      }
-    })
-    if(gastos.length){await db.insertTransactions(gastos);setTransactions(p=>[...p,...gastos])}
-    for(const u of usds){await db.insertUSD(u);setUSDMov(p=>[...p,u])}
-    for(const i of ings){await db.insertIngreso(i);setIngresos(p=>[...p,i])}
-    for(const m of mamas){await db.insertMama(m);setMamaMov(p=>[...p,m])}
-    // Mostrar resumen de lo guardado
-    const mamasPesos=pending.filter(t=>t.type==='gasto_mama_pesos')
-    const resumenMama=mamasPesos.map(t=>`  • ${fmt(t.amount)} = USD ${(t.amount/cotiz).toFixed(2)}`).join('\n')
-    setPending([])
-    addMsg('assistant',`✓ Guardado correctamente.\n\nDeuda mamá sumada:\n${resumenMama}\n(cotización: $${cotiz})`)
-  }
-
-  const handleConfirm=async()=>{
-    await confirmarConCotizacion(null)
-  }
-
-  // handleConfirm sin cotización (para movimientos sin gasto_mama_pesos)
-  const handleConfirmSimple=async()=>{
-    const dateStr=new Date().toISOString().split('T')[0]
-    const gastos=[],usds=[],ings=[],mamas=[]
-    pending.forEach(t=>{
-      if(t.type==='gasto'){
-        gastos.push({date:dateStr,amount:t.amount,category:t.category,description:t.description||''})
-      }
-      if(t.type==='ingreso')ings.push({date:dateStr,amount:t.amount,description:t.description||''})
-      if(t.type==='usd')usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate,peso_amount:t.peso_amount})
-      if(t.type==='mama_pago_usd'){
-        mamas.push({date:dateStr,amount:-(t.usd_amount||0),description:t.description||'Pago USD mamá',type:'pago_cuenta'})
-        usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Pago mamá',exchange_rate:null,peso_amount:null})
-      }
-    })
-    if(gastos.length){await db.insertTransactions(gastos);setTransactions(p=>[...p,...gastos])}
-    for(const u of usds){await db.insertUSD(u);setUSDMov(p=>[...p,u])}
-    for(const i of ings){await db.insertIngreso(i);setIngresos(p=>[...p,i])}
-    for(const m of mamas){await db.insertMama(m);setMamaMov(p=>[...p,m])}
-    setPending([]);addMsg('assistant','✓ Guardado correctamente.')
-  }
+  const handleConfirm=async()=>{ await guardar(pending,null) }
 
   const handlePDF=async(e)=>{
     const file=e.target.files?.[0];if(!file)return
@@ -296,7 +293,7 @@ function ChatView({categories,transactions,setTransactions,ingresos,setIngresos,
       if(!parsed.length){addMsg('assistant','No encontré consumos en el PDF.');setLoading(false);return}
       const withType=parsed.map(t=>({...t,type:'gasto'}));setPending(withType)
       const preview=parsed.slice(0,6).map(t=>`• ${t.description}${t.installment?' ('+t.installment+')':''}: ${fmt(t.amount)} → ${t.category}`).join('\n')
-      addMsg('assistant',`Encontré ${parsed.length} consumos:\n\n${preview}${parsed.length>6?`\n...y ${parsed.length-6} más`:''}\n\n¿Lo guardo?`,withType)
+      addMsg('assistant',`Encontré ${parsed.length} consumos:\n\n${preview}${parsed.length>6?`\n...y ${parsed.length-6} más`:''}\n\n¿Lo guardo?`,{txs:withType})
     }catch(err){addMsg('assistant',`Error al leer el PDF: ${err.message}`)}
     setLoading(false);e.target.value=''
   }
@@ -307,8 +304,13 @@ function ChatView({categories,transactions,setTransactions,ingresos,setIngresos,
       <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:'12px'}}>
         {messages.map((m,i)=>(
           <div key={i} style={{display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{maxWidth:'88%',padding:'10px 14px',borderRadius:'12px',fontSize:'0.88rem',lineHeight:1.55,whiteSpace:'pre-wrap',background:m.role==='user'?'#1e1a10':'#1a1a1a',border:m.role==='user'?'1px solid #3a3020':'1px solid #222',color:m.role==='user'?'#c8a96e':'#e8dcc8'}}>{m.text}</div>
-            {m.txs&&m.role==='assistant'&&<button onClick={handleConfirmSimple} style={{...S.btnGold,marginTop:'8px'}}>✓ Confirmar y guardar</button>}
+            <div style={{maxWidth:'88%',padding:'10px 14px',borderRadius:'12px',fontSize:'0.88rem',lineHeight:1.55,whiteSpace:'pre-wrap',
+              background:m.role==='user'?'#1e1a10':'#1a1a1a',
+              border:m.role==='user'?'1px solid #3a3020':'1px solid #222',
+              color:m.role==='user'?'#c8a96e':'#e8dcc8'}}>{m.text}</div>
+            {m.txs&&m.role==='assistant'&&(
+              <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>✓ Confirmar y guardar</button>
+            )}
           </div>
         ))}
         {loading&&<div style={{color:'#444',fontSize:'0.82rem',fontStyle:'italic'}}>Procesando...</div>}
@@ -317,13 +319,18 @@ function ChatView({categories,transactions,setTransactions,ingresos,setIngresos,
       <div style={{padding:'10px 14px',borderTop:'1px solid #1a1a1a',display:'flex',gap:'8px',alignItems:'flex-end'}}>
         <button onClick={()=>fileRef.current?.click()} style={{background:'#1a1a1a',border:'1px solid #222',color:'#666',padding:'10px 11px',borderRadius:'8px',cursor:'pointer',fontSize:'1rem',flexShrink:0}}>📄</button>
         <input ref={fileRef} type="file" accept="application/pdf" onChange={handlePDF} style={{display:'none'}}/>
-        <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSend()}}} placeholder={waitingCotizacion?'Escribí la cotización (ej: 1400)...':'$14.000 pizza  o pegá varias líneas...'} rows={1} style={{flex:1,background: waitingCotizacion?'#1a1810':'#1a1a1a',border:`1px solid ${waitingCotizacion?'#3a3020':'#222'}`,color:'#e8dcc8',padding:'10px 12px',borderRadius:'8px',fontSize:'0.88rem',resize:'none',minHeight:'42px',maxHeight:'120px',fontFamily:'Georgia,serif',outline:'none'}}/>
-        <button onClick={handleSend} disabled={loading} style={{...S.btnGold,flexShrink:0,opacity:loading?0.4:1,padding:'10px 18px',fontSize:'1.1rem'}}>›</button>
+        <textarea value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSend()}}}
+          placeholder={waitingCotiz?'Escribí la cotización (ej: 1400)...':'$14.000 pizza  o pegá varias líneas...'}
+          rows={1} style={{flex:1,background:waitingCotiz?'#1a1810':'#1a1a1a',border:`1px solid ${waitingCotiz?'#3a3020':'#222'}`,color:'#e8dcc8',padding:'10px 12px',borderRadius:'8px',fontSize:'0.88rem',resize:'none',minHeight:'42px',maxHeight:'120px',fontFamily:'Georgia,serif',outline:'none'}}/>
+        <button onClick={handleSend} disabled={loading}
+          style={{...S.btnGold,flexShrink:0,opacity:loading?0.4:1,padding:'10px 18px',fontSize:'1.1rem'}}>›</button>
       </div>
     </div>
   )
 }
 
+// ── MONTHLY ───────────────────────────────────────────────────────────
 function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovements,obraMovements,categories,selectedMonth,setSelectedMonth,mamaMovements}){
   const {month,year}=selectedMonth
   const [tab,setTab]=useState('resumen')
@@ -331,10 +338,12 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const [newIng,setNewIng]=useState({description:'',amount:''})
   const mTxs=transactions.filter(t=>{const d=new Date(t.date);return d.getMonth()===month&&d.getFullYear()===year})
   const mIngs=ingresos.filter(t=>{const d=new Date(t.date);return d.getMonth()===month&&d.getFullYear()===year})
-  const totalG=mTxs.reduce((s,t)=>s+t.amount,0),totalI=mIngs.reduce((s,t)=>s+t.amount,0),bal=totalI-totalG
-  const byCat=categories.reduce((acc,cat)=>{acc[cat]=mTxs.filter(t=>t.category===cat).reduce((s,t)=>s+t.amount,0);return acc},{})
-  const delTx=async(t)=>{await db.deleteTransaction(t.id);setTransactions(p=>p.filter(x=>x!==t))}
-  const delIng=async(i)=>{await db.deleteIngreso(i.id);setIngresos(p=>p.filter(x=>x!==i))}
+  const totalG=mTxs.reduce((s,t)=>s+(t.amount||0),0)
+  const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
+  const bal=totalI-totalG
+  const byCat=categories.reduce((acc,cat)=>{acc[cat]=mTxs.filter(t=>t.category===cat).reduce((s,t)=>s+(t.amount||0),0);return acc},{})
+  const delTx=async t=>{await db.deleteTransaction(t.id);setTransactions(p=>p.filter(x=>x!==t))}
+  const delIng=async i=>{await db.deleteIngreso(i.id);setIngresos(p=>p.filter(x=>x!==i))}
   const addIng=async()=>{
     if(!newIng.description||!newIng.amount)return
     const d=new Date(year,month,new Date().getDate())
@@ -360,73 +369,68 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
           </button>
         ))}
       </div>
-      {tab==='resumen'&&(
-        <>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'12px'}}>
-            <MiniCard label="Ingresos" value={fmt(totalI)} color="#6e9e6e"/>
-            <MiniCard label="Gastos" value={fmt(totalG)} color="#c87070"/>
-          </div>
-          <div style={{...S.card,background:bal>=0?'#141f14':'#1f1414',borderColor:bal>=0?'#1e3a1e':'#3a1e1e',marginBottom:'14px'}}>
-            <div style={S.label}>Balance</div><div style={{fontSize:'1.5rem',color:bal>=0?'#6e9e6e':'#c87070',marginTop:'6px'}}>{fmt(bal)}</div>
-          </div>
-          <div style={S.card}>
-            <div style={{...S.label,marginBottom:'12px'}}>Por categoría</div>
-            {Object.entries(byCat).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([cat,val])=>(
-              <div key={cat} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid #1e1e1e'}}>
-                <span style={{fontSize:'0.85rem',color:'#bbb'}}>{cat}</span>
-                <span style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmt(val)}</span>
-              </div>
-            ))}
-            {!Object.values(byCat).some(v=>v>0)&&<div style={{color:'#444',textAlign:'center',padding:'20px',fontSize:'0.85rem'}}>Sin gastos este mes</div>}
-          </div>
-        </>
-      )}
-      {tab==='gastos'&&(
-        <>
-          {mTxs.length===0&&<div style={{color:'#444',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Sin gastos registrados</div>}
-          {mTxs.map((t,i)=>(
-            <div key={i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div style={{flex:1,minWidth:0,marginRight:'10px'}}>
-                <div style={{fontSize:'0.7rem',color:'#555',marginBottom:'2px'}}>{t.category} · {t.date}</div>
-                <div style={{fontSize:'0.88rem',color:'#ddd',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.description||'—'}</div>
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
-                <span style={{color:'#c87070',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
-                <button onClick={()=>delTx(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
-              </div>
+      {tab==='resumen'&&(<>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'12px'}}>
+          <MiniCard label="Ingresos" value={fmt(totalI)} color="#6e9e6e"/>
+          <MiniCard label="Gastos"   value={fmt(totalG)} color="#c87070"/>
+        </div>
+        <div style={{...S.card,background:bal>=0?'#141f14':'#1f1414',borderColor:bal>=0?'#1e3a1e':'#3a1e1e',marginBottom:'14px'}}>
+          <div style={S.label}>Balance</div><div style={{fontSize:'1.5rem',color:bal>=0?'#6e9e6e':'#c87070',marginTop:'6px'}}>{fmt(bal)}</div>
+        </div>
+        <div style={S.card}>
+          <div style={{...S.label,marginBottom:'12px'}}>Por categoría</div>
+          {Object.entries(byCat).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([cat,val])=>(
+            <div key={cat} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid #1e1e1e'}}>
+              <span style={{fontSize:'0.85rem',color:'#bbb'}}>{cat}</span>
+              <span style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmt(val)}</span>
             </div>
           ))}
-        </>
-      )}
-      {tab==='ingresos'&&(
-        <>
-          {mIngs.map((t,i)=>(
-            <div key={i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div><div style={{fontSize:'0.7rem',color:'#555'}}>{t.date}</div><div style={{fontSize:'0.88rem',color:'#ddd'}}>{t.description}</div></div>
-              <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-                <span style={{color:'#6e9e6e',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
-                <button onClick={()=>delIng(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
-              </div>
+          {!Object.values(byCat).some(v=>v>0)&&<div style={{color:'#444',textAlign:'center',padding:'20px',fontSize:'0.85rem'}}>Sin gastos este mes</div>}
+        </div>
+      </>)}
+      {tab==='gastos'&&(<>
+        {mTxs.length===0&&<div style={{color:'#444',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Sin gastos registrados</div>}
+        {mTxs.map((t,i)=>(
+          <div key={i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div style={{flex:1,minWidth:0,marginRight:'10px'}}>
+              <div style={{fontSize:'0.7rem',color:'#555',marginBottom:'2px'}}>{t.category} · {t.date}</div>
+              <div style={{fontSize:'0.88rem',color:'#ddd',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.description||'—'}</div>
             </div>
-          ))}
-          {showAddIng?(
-            <div style={{...S.card,marginTop:'8px'}}>
-              <input placeholder="Descripción (ej: Sueldo Bri)" value={newIng.description} onChange={e=>setNewIng({...newIng,description:e.target.value})} style={S.input}/>
-              <input placeholder="Monto en pesos" type="number" value={newIng.amount} onChange={e=>setNewIng({...newIng,amount:e.target.value})} style={{...S.input,marginTop:'8px'}}/>
-              <div style={{display:'flex',gap:'8px',marginTop:'10px'}}>
-                <button onClick={addIng} style={{...S.btnGold,flex:1}}>Guardar</button>
-                <button onClick={()=>setShowAddIng(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
-              </div>
+            <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
+              <span style={{color:'#c87070',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
+              <button onClick={()=>delTx(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
-          ):(
-            <button onClick={()=>setShowAddIng(true)} style={{...S.btnGray,width:'100%',marginTop:'8px'}}>+ Agregar ingreso</button>
-          )}
-        </>
-      )}
+          </div>
+        ))}
+      </>)}
+      {tab==='ingresos'&&(<>
+        {mIngs.map((t,i)=>(
+          <div key={i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div><div style={{fontSize:'0.7rem',color:'#555'}}>{t.date}</div><div style={{fontSize:'0.88rem',color:'#ddd'}}>{t.description}</div></div>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <span style={{color:'#6e9e6e',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
+              <button onClick={()=>delIng(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
+            </div>
+          </div>
+        ))}
+        {showAddIng?(
+          <div style={{...S.card,marginTop:'8px'}}>
+            <input placeholder="Descripción (ej: Sueldo Bri)" value={newIng.description} onChange={e=>setNewIng({...newIng,description:e.target.value})} style={S.input}/>
+            <input placeholder="Monto en pesos" type="number" value={newIng.amount} onChange={e=>setNewIng({...newIng,amount:e.target.value})} style={{...S.input,marginTop:'8px'}}/>
+            <div style={{display:'flex',gap:'8px',marginTop:'10px'}}>
+              <button onClick={addIng} style={{...S.btnGold,flex:1}}>Guardar</button>
+              <button onClick={()=>setShowAddIng(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+            </div>
+          </div>
+        ):(
+          <button onClick={()=>setShowAddIng(true)} style={{...S.btnGray,width:'100%',marginTop:'8px'}}>+ Agregar ingreso</button>
+        )}
+      </>)}
     </div>
   )
 }
 
+// ── USD ───────────────────────────────────────────────────────────────
 function USDView({usdMovements,setUSDMov}){
   const [form,setForm]=useState({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''})
   const [show,setShow]=useState(false)
@@ -436,7 +440,7 @@ function USDView({usdMovements,setUSDMov}){
     const mv={date:form.date||new Date().toISOString().split('T')[0],usd100:parseFloat(form.usd100)||0,usd_cambio:parseFloat(form.usd_cambio)||0,description:form.description,exchange_rate:parseFloat(form.exchange_rate)||null}
     await db.insertUSD(mv);setUSDMov(p=>[...p,mv]);setForm({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''});setShow(false)
   }
-  const del=async(m)=>{await db.deleteUSD(m.id);setUSDMov(p=>p.filter(x=>x!==m))}
+  const del=async m=>{await db.deleteUSD(m.id);setUSDMov(p=>p.filter(x=>x!==m))}
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Caja USD</h2>
@@ -479,16 +483,18 @@ function USDView({usdMovements,setUSDMov}){
   )
 }
 
+// ── OBRA ──────────────────────────────────────────────────────────────
 function ObraView({obraMovements,setObraMov}){
   const [form,setForm]=useState({date:'',category:'Materiales',description:'',pesos:'',usd:'',pay_method:'Transferencia'})
   const [show,setShow]=useState(false)
-  const totalUSD=obraMovements.reduce((s,m)=>s+(m.usd||0),0),totalPesos=obraMovements.reduce((s,m)=>s+(m.pesos||0),0)
+  const totalUSD=obraMovements.reduce((s,m)=>s+(m.usd||0),0)
+  const totalPesos=obraMovements.reduce((s,m)=>s+(m.pesos||0),0)
   const byCat=OBRA_CATS.reduce((acc,c)=>{acc[c]=obraMovements.filter(m=>m.category===c).reduce((s,m)=>s+(m.usd||0),0);return acc},{})
   const add_=async()=>{
     const mv={date:form.date||new Date().toISOString().split('T')[0],category:form.category,description:form.description,pesos:parseFloat(form.pesos)||0,usd:parseFloat(form.usd)||0,pay_method:form.pay_method}
     await db.insertObra(mv);setObraMov(p=>[...p,mv]);setForm({date:'',category:'Materiales',description:'',pesos:'',usd:'',pay_method:'Transferencia'});setShow(false)
   }
-  const del=async(m)=>{await db.deleteObra(m.id);setObraMov(p=>p.filter(x=>x!==m))}
+  const del=async m=>{await db.deleteObra(m.id);setObraMov(p=>p.filter(x=>x!==m))}
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Obra Libertad</h2>
@@ -498,7 +504,11 @@ function ObraView({obraMovements,setObraMov}){
       </div>
       <div style={{...S.card,marginBottom:'16px'}}>
         <div style={{...S.label,marginBottom:'10px'}}>Por categoría (USD)</div>
-        {OBRA_CATS.map(c=>byCat[c]>0&&<div key={c} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1e1e1e',fontSize:'0.85rem'}}><span style={{color:'#bbb'}}>{c}</span><span style={{color:'#c8a96e'}}>USD {byCat[c].toLocaleString()}</span></div>)}
+        {OBRA_CATS.map(c=>byCat[c]>0&&(
+          <div key={c} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1e1e1e',fontSize:'0.85rem'}}>
+            <span style={{color:'#bbb'}}>{c}</span><span style={{color:'#c8a96e'}}>USD {byCat[c].toLocaleString()}</span>
+          </div>
+        ))}
       </div>
       {show&&(
         <div style={{...S.card,marginBottom:'14px'}}>
@@ -509,8 +519,13 @@ function ObraView({obraMovements,setObraMov}){
             <input placeholder="USD" value={form.usd} onChange={e=>setForm({...form,usd:e.target.value})} style={S.input} type="number"/>
           </div>
           <input placeholder="Descripción" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
-          <select value={form.pay_method} onChange={e=>setForm({...form,pay_method:e.target.value})} style={{...S.input,background:'#111',marginBottom:'8px'}}>{['Efectivo','Transferencia','Tarjeta'].map(p=><option key={p}>{p}</option>)}</select>
-          <div style={{display:'flex',gap:'8px'}}><button onClick={add_} style={{...S.btnGold,flex:1}}>Guardar</button><button onClick={()=>setShow(false)} style={{...S.btnGray,flex:1}}>Cancelar</button></div>
+          <select value={form.pay_method} onChange={e=>setForm({...form,pay_method:e.target.value})} style={{...S.input,background:'#111',marginBottom:'8px'}}>
+            {['Efectivo','Transferencia','Tarjeta'].map(p=><option key={p}>{p}</option>)}
+          </select>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button onClick={add_} style={{...S.btnGold,flex:1}}>Guardar</button>
+            <button onClick={()=>setShow(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+          </div>
         </div>
       )}
       {!show&&<button onClick={()=>setShow(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar gasto de obra</button>}
@@ -519,7 +534,10 @@ function ObraView({obraMovements,setObraMov}){
           <div key={i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div><div style={{fontSize:'0.7rem',color:'#555'}}>{m.date} · {m.category} · {m.pay_method}</div><div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description}</div></div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-              <div style={{textAlign:'right'}}>{m.usd>0&&<div style={{fontSize:'0.8rem',color:'#c8a96e'}}>USD {m.usd}</div>}{m.pesos>0&&<div style={{fontSize:'0.75rem',color:'#888'}}>{fmt(m.pesos)}</div>}</div>
+              <div style={{textAlign:'right'}}>
+                {m.usd>0&&<div style={{fontSize:'0.8rem',color:'#c8a96e'}}>USD {m.usd}</div>}
+                {m.pesos>0&&<div style={{fontSize:'0.75rem',color:'#888'}}>{fmt(m.pesos)}</div>}
+              </div>
               <button onClick={()=>del(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
@@ -529,47 +547,44 @@ function ObraView({obraMovements,setObraMov}){
   )
 }
 
+// ── MAMÁ ──────────────────────────────────────────────────────────────
 function MamaView({mamaMovements,setMamaMov}){
   const [form,setForm]=useState({date:'',amount:'',description:'',type:'gasto_mama'})
   const [show,setShow]=useState(false)
-  // amount positivo = gastaste vos por ella (ella te debe más)
-  // amount negativo = ella pagó / te devolvió (deuda baja)
   const saldo=mamaMovements.reduce((s,m)=>s+(m.amount||0),0)
   const add=async()=>{
     if(!form.amount||!form.description)return
-    const mv={date:form.date||new Date().toISOString().split('T')[0],amount:parseFloat(form.amount),description:form.description,type:form.type}
+    const finalAmount=form.type==='pago_cuenta'?-Math.abs(parseFloat(form.amount)):Math.abs(parseFloat(form.amount))
+    const mv={date:form.date||new Date().toISOString().split('T')[0],amount:finalAmount,description:form.description,type:form.type}
     await db.insertMama(mv);setMamaMov(p=>[...p,mv]);setForm({date:'',amount:'',description:'',type:'gasto_mama'});setShow(false)
   }
-  const del=async(m)=>{await db.deleteMama(m.id);setMamaMov(p=>p.filter(x=>x!==m))}
+  const del=async m=>{await db.deleteMama(m.id);setMamaMov(p=>p.filter(x=>x!==m))}
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'6px'}}>Cuenta Mamá</h2>
       <p style={{fontSize:'0.75rem',color:'#555',marginBottom:'16px',lineHeight:1.5}}>
-        Los gastos que cargás como categoría "Mamá" se suman automáticamente acá.<br/>
-        Agregá pagos a cuenta manualmente con monto negativo.
+        Los gastos con categoría "Mamá" y pagos en USD se registran automáticamente.<br/>
+        Usá este formulario para movimientos manuales.
       </p>
       <div style={{...S.card,background:saldo>0?'#1f1a14':'#141f14',borderColor:saldo>0?'#3a2a1e':'#1e3a1e',marginBottom:'16px'}}>
         <div style={S.label}>Saldo — {saldo>0?'te debe':'le debés'}</div>
-        <div style={{fontSize:'1.8rem',color:saldo>0?'#c8a96e':'#6e9e6e',marginTop:'6px'}}>{fmt(Math.abs(saldo))}</div>
+        <div style={{fontSize:'1.8rem',color:saldo>0?'#c8a96e':'#6e9e6e',marginTop:'6px'}}>
+          USD {Math.abs(saldo).toLocaleString('es-AR',{maximumFractionDigits:2})}
+        </div>
       </div>
       {show&&(
         <div style={{...S.card,marginBottom:'14px'}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}}>
             <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} style={S.input}/>
             <select value={form.type} onChange={e=>setForm({...form,type:e.target.value})} style={{...S.input,background:'#111'}}>
-              <option value="gasto_mama">Gasto por ella (+)</option>
-              <option value="pago_cuenta">Pago a cuenta (−)</option>
+              <option value="gasto_mama">Gasto por ella (suma)</option>
+              <option value="pago_cuenta">Pago a cuenta (resta)</option>
             </select>
           </div>
-          <input placeholder={form.type==='pago_cuenta'?'Monto pagado (se resta)':'Monto gastado (se suma)'} value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
+          <input placeholder="Monto en USD" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
           <input placeholder="Descripción" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
           <div style={{display:'flex',gap:'8px'}}>
-            <button onClick={()=>{
-              // pago a cuenta va en negativo
-              const finalAmount = form.type==='pago_cuenta' ? -Math.abs(parseFloat(form.amount)) : Math.abs(parseFloat(form.amount))
-              setForm(f=>({...f,amount:String(finalAmount)}))
-              setTimeout(add,0)
-            }} style={{...S.btnGold,flex:1}}>Guardar</button>
+            <button onClick={add} style={{...S.btnGold,flex:1}}>Guardar</button>
             <button onClick={()=>setShow(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
           </div>
         </div>
@@ -583,7 +598,7 @@ function MamaView({mamaMovements,setMamaMov}){
               <div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description}</div>
             </div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-              <span style={{fontSize:'0.9rem',color:m.amount>=0?'#c87070':'#6e9e6e'}}>{m.amount>=0?'+':''}{fmt(m.amount)}</span>
+              <span style={{fontSize:'0.9rem',color:m.amount>=0?'#c87070':'#6e9e6e'}}>{m.amount>=0?'+':''}{(m.amount||0).toLocaleString('es-AR',{maximumFractionDigits:2})} USD</span>
               <button onClick={()=>del(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
@@ -593,29 +608,25 @@ function MamaView({mamaMovements,setMamaMov}){
   )
 }
 
+// ── SETTINGS ──────────────────────────────────────────────────────────
 function SettingsView({categories,setCategories,hiddenSections,setHiddenSections}){
   const [cats,setCats]=useState([...categories])
   const [newCat,setNewCat]=useState('')
   const [saved,setSaved]=useState(false)
   const [showKey,setShowKey]=useState(false)
   const [newKey,setNewKey]=useState('')
-
   const add=()=>{if(!newCat.trim())return;setCats([...cats,newCat.trim()]);setNewCat('')}
-  const remove=(i)=>setCats(cats.filter((_,ci)=>ci!==i))
+  const remove=i=>setCats(cats.filter((_,ci)=>ci!==i))
   const saveCats=async()=>{await db.saveCategories(cats);setCategories(cats);setSaved(true);setTimeout(()=>setSaved(false),2000)}
   const saveKey_=()=>{if(newKey.trim()){localStorage.setItem('gemini_api_key',newKey.trim());setShowKey(false);setNewKey('');alert('API key actualizada.')}}
-
-  const toggleSection=async(s)=>{
+  const toggleSection=async s=>{
     const updated=hiddenSections.includes(s)?hiddenSections.filter(x=>x!==s):[...hiddenSections,s]
     setHiddenSections(updated);await db.saveHiddenSections(updated)
   }
-
   const sectionLabels={obra:'⚒ Obra Libertad',mama:'♡ Cuenta Mamá'}
-
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'20px'}}>Configuración</h2>
-
       <div style={{...S.label,marginBottom:'12px'}}>Secciones opcionales</div>
       <div style={{...S.card,marginBottom:'20px'}}>
         <p style={{fontSize:'0.75rem',color:'#555',margin:'0 0 12px',lineHeight:1.5}}>Ocultá secciones que ya no uses. Los datos no se borran.</p>
@@ -628,7 +639,6 @@ function SettingsView({categories,setCategories,hiddenSections,setHiddenSections
           </div>
         ))}
       </div>
-
       <div style={{...S.label,marginBottom:'12px'}}>Categorías de gastos</div>
       <div style={{marginBottom:'14px'}}>
         {cats.map((c,i)=>(
@@ -643,12 +653,14 @@ function SettingsView({categories,setCategories,hiddenSections,setHiddenSections
         <button onClick={add} style={S.btnGray}>+</button>
       </div>
       <button onClick={saveCats} style={{...S.btnGold,width:'100%',marginBottom:'24px'}}>{saved?'✓ Guardado':'Guardar categorías'}</button>
-
       <div style={{borderTop:'1px solid #1a1a1a',paddingTop:'20px'}}>
         <div style={{...S.label,marginBottom:'12px'}}>Gemini API Key</div>
         {showKey?(<>
           <input type="password" placeholder="AIzaSy..." value={newKey} onChange={e=>setNewKey(e.target.value)} style={{...S.input,marginBottom:'8px'}}/>
-          <div style={{display:'flex',gap:'8px'}}><button onClick={saveKey_} style={{...S.btnGold,flex:1}}>Guardar</button><button onClick={()=>setShowKey(false)} style={{...S.btnGray,flex:1}}>Cancelar</button></div>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button onClick={saveKey_} style={{...S.btnGold,flex:1}}>Guardar</button>
+            <button onClick={()=>setShowKey(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+          </div>
         </>):(
           <button onClick={()=>setShowKey(true)} style={{...S.btnGray,width:'100%'}}>Cambiar API Key</button>
         )}
