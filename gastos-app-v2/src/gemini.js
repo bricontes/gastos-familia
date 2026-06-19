@@ -56,49 +56,59 @@ function parseJSON(raw) {
   catch { const m = raw.match(/\[[\s\S]*\]/); if (m) return JSON.parse(m[0]); return [] }
 }
 
-export async function parseChat(text, categories, obraCats = []) {
+// entities: [{ id, name, type }]   (type: 'deudor' | 'acreedor')
+// projects: [{ id, name, categories }]
+export async function parseChat(text, categories, entities = [], projects = []) {
+  const entityNames = entities.map(e => e.name).join(', ') || '(ninguna todavía)'
+  const projectNames = projects.map(p => p.name).join(', ') || '(ninguno todavía)'
+  const allProjectCats = [...new Set(projects.flatMap(p => p.categories || []))]
+  const singleActiveProject = projects.length === 1 ? projects[0].name : null
+
   const sys = `Sos un asistente que parsea mensajes de gastos e ingresos del hogar argentino.
 Respondé SOLO con JSON array válido, sin markdown ni texto extra.
+
+Entidades (deudores/acreedores) que ya existen: ${entityNames}
+Proyectos activos que ya existen: ${projectNames}
 
 Tipos posibles:
 
 1. GASTO SIMPLE: { "type": "gasto", "amount": número, "description": string, "category": string }
    - El campo "description" es el DETALLE del gasto (no la categoría). Ejemplos:
      "$10.000 salud corte bri" → category="Salud y belleza", description="corte bri"
-     "$1500 obra flete" → category="Obra", description="flete"
      "$14.000 pizza" → category="Comida", description="pizza"
      "$8.300 súper" → category="Comida", description="súper"
-   - Si el texto menciona "obra" como categoría → type="obra_pesos" (ver abajo)
+   - Si el texto menciona "ajuste" (de cierre de mes / de caja) → category="Ajuste de cierre"
 
-2. GASTO OBRA EN PESOS: { "type": "obra_pesos", "amount": número, "description": string, "obra_category": string }
-   - Cuando el gasto es para la obra y está en pesos
-   - Se pedirá cotización para convertir a USD y registrar en la sección Obra
-   - También se registra como egreso en pesos en el mes
-   - obra_category debe ser una de: ${obraCats.length ? obraCats.join(', ') : 'Materiales, Mano de obra, Dirección de obra, Mobiliario/equipamiento, Otro'}
-   - Si el usuario no especifica categoría de obra, dejá obra_category="" para que el bot la pregunte
-   - Ejemplos: "$150.000 obra flete" → type=obra_pesos, description="flete", obra_category="Materiales"
-               "$50.000 obra albañil" → type=obra_pesos, description="albañil", obra_category="Mano de obra"
+2. INGRESO PESOS: { "type": "ingreso", "amount": número, "description": string }
+   - Si el texto menciona "ajuste" y es un ingreso (+) → description="Ajuste de cierre"
 
-3. GASTO POR MAMÁ EN PESOS: { "type": "gasto_mama_pesos", "amount": número, "description": string }
-   - Cuando gastás pesos propios por ella: transferencias, pagos, compras para ella
-   - La deuda de mamá es en USD, así que se pedirá la cotización al usuario
-   - Ejemplos: "le pasé $150.000 a mami", "$50.000 farmacia mamá", "pagué $80.000 municipal mamá"
+3. CAMBIO USD: { "type": "usd", "usd_amount": número, "peso_amount": número, "exchange_rate": número, "description": string }
+   - usd_amount positivo = recibiste USD, negativo = vendiste/entregaste USD
+   - Ejemplo: "Cambio a 1410 -usd 400 +$564.000" → usd_amount=-400, peso_amount=564000, exchange_rate=1410
 
-4. INGRESO PESOS: { "type": "ingreso", "amount": número, "description": string }
+4. MOVIMIENTO CON ENTIDAD (deudor o acreedor): { "type": "entity_movement", "entity_name": string, "amount": número, "currency": "ARS"|"USD", "description": string, "is_new": boolean }
+   - Se usa SIEMPRE que el texto mencione el nombre de una persona de la lista de entidades (o un nombre nuevo que parezca una persona en contexto de deuda/préstamo/pago).
+   - "amount" es el FLUJO DE CAJA REAL, no la deuda en sí: positivo = entró plata a tu bolsillo, negativo = salió plata de tu bolsillo. No intentes calcular si la deuda sube o baja, eso lo hace la app.
+   - "currency" = "USD" si el texto dice "usd"/"dólares", "ARS" si usa "$"/pesos.
+   - "is_new" = true si el nombre NO está en la lista de entidades existentes (para que la app pregunte si hay que crearla y de qué tipo).
+   - Ejemplos:
+     "marina + usd 1000" → entity_name="Marina", amount=1000, currency="USD" (cobraste)
+     "le presté 50000 a marina" → entity_name="Marina", amount=-50000, currency="ARS" (saliste de tu bolsillo)
+     "$150.000 le pasé a mami" → entity_name="Mami", amount=-150000, currency="ARS"
+     "+ usd 1000 alquiler chinos dani" → entity_name="Dani", amount=1000, currency="USD", description="alquiler chinos"
 
-5. CAMBIO USD: { "type": "usd", "usd_amount": número, "peso_amount": número, "exchange_rate": número, "description": string }
-   - usd_amount positivo = recibiste USD, negativo = vendiste USD
+5. GASTO DE PROYECTO EN PESOS: { "type": "project_gasto", "project_name": string, "amount": número, "description": string, "category": string }
+   - Cuando el gasto es para un proyecto/obra y está en pesos. Se pedirá cotización para normalizarlo a USD.
+   - También se registra como egreso en pesos en el mes (categoría "Obra").
+   - Si el texto dice "obra" genérico y hay un solo proyecto activo (${singleActiveProject || 'no hay uno solo, hay que preguntar'}), usá ese nombre. Si hay más de uno, dejá project_name="" para que la app pregunte cuál.
+   - category debe ser una de las categorías del proyecto correspondiente. Categorías conocidas de proyectos: ${allProjectCats.length ? allProjectCats.join(', ') : 'Materiales, Mano de obra, Dirección de obra, Mobiliario/equipamiento, Otro'}
+   - Si no se especifica categoría, dejá category="" para que la app la pregunte.
+   - Ejemplos: "$150.000 obra flete" → project_name="${singleActiveProject||''}", description="flete", category="Materiales"
 
-6. PAGO DEUDA MAMÁ EN USD: { "type": "mama_pago_usd", "usd_amount": número, "description": string }
-   - Mamá te paga su deuda en USD → resta de su deuda Y suma a caja USD
-
-Reglas:
-- "+ usd X ... mama" → type=mama_pago_usd
-- "+ usd X ..." sin mama → type=usd con usd_amount positivo
-- "Cambio a XXXX -usd N +$M" → type=usd
-- Cualquier gasto en pesos mencionando mamá/mami → type=gasto_mama_pesos
-- Gasto mencionando "obra" como destino → type=obra_pesos
-- Resto de gastos → type=gasto con category de la lista
+Reglas generales:
+- Lo primero es chequear si el texto menciona el nombre de una entidad o de un proyecto existente — esos casos van por type=entity_movement o type=project_gasto, NO como gasto/ingreso genérico.
+- Sin "+" adelante del monto = egreso/salida. Con "+" adelante = ingreso/entrada. Esta misma regla de signo aplica también dentro de entity_movement para decidir si "amount" es positivo o negativo.
+- Resto de gastos sin entidad ni proyecto → type=gasto con category de la lista de categorías normales.
 
 Categorías para gastos normales: ${categories.join(', ')}`
 
