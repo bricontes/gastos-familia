@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 const fmt = n => n || 0
 
-export function exportToExcel({ transactions, ingresos, usdMovements, obraMovements, categories, month, year }) {
+export function exportToExcel({ transactions, ingresos, usdMovements, categories, month, year }) {
   const wb = XLSX.utils.book_new()
   const monthName = MONTHS[month]
 
@@ -57,13 +57,6 @@ export function exportToExcel({ transactions, ingresos, usdMovements, obraMoveme
   const ws3 = XLSX.utils.aoa_to_sheet(usdRows)
   ws3['!cols'] = [{wch:12},{wch:40},{wch:14},{wch:14},{wch:12},{wch:18},{wch:18},{wch:12}]
   XLSX.utils.book_append_sheet(wb, ws3, 'USD')
-
-  // ── Hoja Obra Libertad ────────────────────────────────────────────
-  const obraRows = [['Fecha','Categoría','Descripción','Forma de pago','Monto pesos','Monto USD']]
-  obraMovements.forEach(m => obraRows.push([m.date, m.category, m.description, m.pay_method, m.pesos||0, m.usd||0]))
-  const ws4 = XLSX.utils.aoa_to_sheet(obraRows)
-  ws4['!cols'] = [{wch:12},{wch:26},{wch:42},{wch:16},{wch:15},{wch:12}]
-  XLSX.utils.book_append_sheet(wb, ws4, 'Obra Libertad')
 
   XLSX.writeFile(wb, `Gastos_${monthName}_${year}.xlsx`)
 }
