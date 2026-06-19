@@ -2,12 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { parseChat, parsePDF, hasGeminiKey } from './gemini.js'
 import { exportToExcel } from './export.js'
 import * as db from './db.js'
+import { entityBalance } from './db.js'
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-const DEFAULT_CATEGORIES = ["Comida","Delivery","Salidas","Auto y transporte","Servicios e impuestos","Salud y belleza","Casa y art. del hogar","Ropa","Educación","Mascotas","Deporte","Regalos","Ahorro e inversión","Asesorías","Mamá","Otros","Azul"]
-const DEFAULT_OBRA_SETTINGS = { activeObra: 'Libertad', obras: { Libertad: ['Dirección de obra','Materiales','Mano de obra','Mobiliario/equipamiento','Otro'] } }
-const ALL_SECTIONS = ["obra","mama"]
+const DEFAULT_CATEGORIES = ["Comida","Delivery","Salidas","Auto y transporte","Servicios e impuestos","Salud y belleza","Casa y art. del hogar","Ropa","Educación","Mascotas","Deporte","Regalos","Ahorro e inversión","Asesorías","Mamá","Obra","Otros","Azul","Ajuste de cierre"]
+const DEFAULT_PROJECT_CATS = ['Dirección de obra','Materiales','Mano de obra','Mobiliario/equipamiento','Otro']
+const ALL_SECTIONS = ["entities","projects"]
 const fmt = n => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0)
+const fmtUsd = n => `USD ${(n||0).toLocaleString('es-AR',{maximumFractionDigits:2})}`
 const S = {
   card:    {background:'#1a1a1a',border:'1px solid #222',borderRadius:'8px',padding:'16px'},
   navBtn:  {background:'#1a1a1a',border:'1px solid #222',color:'#777',padding:'4px 14px',borderRadius:'4px',cursor:'pointer',fontSize:'1rem'},
@@ -17,40 +19,49 @@ const S = {
   label:   {fontSize:'0.6rem',letterSpacing:'0.12em',color:'#666',textTransform:'uppercase'},
 }
 
+function matchByName(list, text) {
+  if (!text) return null
+  const t = text.toLowerCase().trim()
+  return list.find(x => x.name.toLowerCase() === t) || list.find(x => x.name.toLowerCase().includes(t) || t.includes(x.name.toLowerCase())) || null
+}
+
 export default function App() {
   const [ready,setReady]=useState(false)
   const [view,setView]=useState('home')
   const [categories,setCategories]=useState(DEFAULT_CATEGORIES)
   const [hiddenSections,setHiddenSections]=useState([])
-  const [obraSettings,setObraSettings]=useState(DEFAULT_OBRA_SETTINGS)
   const [transactions,setTransactions]=useState([])
   const [ingresos,setIngresos]=useState([])
   const [usdMovements,setUSDMov]=useState([])
-  const [obraMovements,setObraMov]=useState([])
-  const [mamaMovements,setMamaMov]=useState([])
+  const [entities,setEntities]=useState([])
+  const [entityMovements,setEntityMov]=useState([])
+  const [projects,setProjects]=useState([])
+  const [projectMovements,setProjectMov]=useState([])
   const [selectedMonth,setSelectedMonth]=useState(()=>{ const d=new Date(); return {month:d.getMonth(),year:d.getFullYear()} })
 
   useEffect(()=>{
     ;(async()=>{
       try {
-        const [cats,hidden,obraSet,txs,ings,usd,obra,mama]=await Promise.all([
+        const [cats,hidden,txs,ings,usd,ents,entMovs,projs,projMovs]=await Promise.all([
           db.getCategories(DEFAULT_CATEGORIES),
           db.getHiddenSections(),
-          db.getObraSettings(),
           db.getTransactions(),
           db.getIngresos(),
           db.getUSDMovements(),
-          db.getObraMovements(),
-          db.getMamaMovements(),
+          db.getEntities(),
+          db.getEntityMovements(),
+          db.getProjects(),
+          db.getProjectMovements(),
         ])
         setCategories(cats||DEFAULT_CATEGORIES)
         setHiddenSections(hidden||[])
-        setObraSettings(obraSet||DEFAULT_OBRA_SETTINGS)
         setTransactions(txs||[])
         setIngresos(ings||[])
         setUSDMov(usd||[])
-        setObraMov(obra||[])
-        setMamaMov(mama||[])
+        setEntities(ents||[])
+        setEntityMov(entMovs||[])
+        setProjects(projs||[])
+        setProjectMov(projMovs||[])
       } catch(e) {
         console.error('Error loading data:', e)
       } finally {
@@ -63,21 +74,29 @@ export default function App() {
   if (!hasGeminiKey()) return <SetupScreen onDone={()=>window.location.reload()} />
 
   const isHidden = s => hiddenSections.includes(s)
-  const activeObraCats = obraSettings.obras?.[obraSettings.activeObra] || DEFAULT_OBRA_SETTINGS.obras['Libertad']
-  const p={transactions,setTransactions,ingresos,setIngresos,usdMovements,setUSDMov,obraMovements,setObraMov,mamaMovements,setMamaMov,categories,setCategories,hiddenSections,setHiddenSections,obraSettings,setObraSettings,activeObraCats,selectedMonth,setSelectedMonth,isHidden}
+  const activeEntities = entities.filter(e=>e.status!=='cerrado')
+  const activeProjects = projects.filter(p=>p.status!=='cerrado')
+  const p={
+    transactions,setTransactions,ingresos,setIngresos,usdMovements,setUSDMov,
+    entities,setEntities,entityMovements,setEntityMov,activeEntities,
+    projects,setProjects,projectMovements,setProjectMov,activeProjects,
+    categories,setCategories,hiddenSections,setHiddenSections,
+    selectedMonth,setSelectedMonth,isHidden,
+  }
 
   return (
     <div style={{minHeight:'100vh',background:'#0f0f0f',color:'#e8dcc8',fontFamily:'Georgia,serif',paddingBottom:'72px'}}>
-      {view==='home'     && <HomeView     {...p} setView={setView}/>}
-      {view==='chat'     && <ChatView     {...p}/>}
-      {view==='monthly'  && <MonthlyView  {...p}/>}
-      {view==='usd'      && <USDView      {...p}/>}
-      {view==='obra'     && !isHidden('obra') && <ObraView  {...p}/>}
-      {view==='obra'     &&  isHidden('obra') && <HiddenSection name="Obra" onBack={()=>setView('home')}/>}
-      {view==='mama'     && !isHidden('mama') && <MamaView  {...p}/>}
-      {view==='mama'     &&  isHidden('mama') && <HiddenSection name="Cuenta Mamá" onBack={()=>setView('home')}/>}
-      {view==='settings' && <SettingsView {...p}/>}
-      <BottomNav view={view} setView={setView} isHidden={isHidden} obraSettings={obraSettings}/>
+      {view==='home'     && <HomeView      {...p} setView={setView}/>}
+      {view==='chat'     && <ChatView      {...p}/>}
+      {view==='monthly'  && <MonthlyView   {...p}/>}
+      {view==='usd'      && <USDView       {...p}/>}
+      {view==='entities' && !isHidden('entities') && <EntitiesView {...p}/>}
+      {view==='entities' &&  isHidden('entities') && <HiddenSection name="Deudores/Acreedores" onBack={()=>setView('home')}/>}
+      {view==='projects' && !isHidden('projects') && <ProjectsView {...p}/>}
+      {view==='projects' &&  isHidden('projects') && <HiddenSection name="Proyectos" onBack={()=>setView('home')}/>}
+      {view==='new'      && <NewConceptView {...p} setView={setView}/>}
+      {view==='settings' && <SettingsView  {...p}/>}
+      <BottomNav view={view} setView={setView} isHidden={isHidden}/>
     </div>
   )
 }
@@ -117,15 +136,15 @@ function HiddenSection({name,onBack}){
   )
 }
 
-function BottomNav({view,setView,isHidden,obraSettings}){
-  const obraLabel = obraSettings?.activeObra || 'Obra'
+function BottomNav({view,setView,isHidden}){
   const items=[
     {id:'home',icon:'⌂',label:'Inicio'},
     {id:'chat',icon:'✦',label:'Registrar'},
     {id:'monthly',icon:'◈',label:'Mes'},
     {id:'usd',icon:'$',label:'USD'},
-    {id:'obra',icon:'⚒',label:obraLabel,opt:true},
-    {id:'mama',icon:'♡',label:'Mamá',opt:true},
+    {id:'entities',icon:'♡',label:'Deudores',opt:true},
+    {id:'projects',icon:'⚒',label:'Proyectos',opt:true},
+    {id:'new',icon:'+',label:'Nuevo'},
     {id:'settings',icon:'⚙',label:'Config'},
   ]
   return (
@@ -148,7 +167,8 @@ function MiniCard({label,value,color}){
   return <div style={S.card}><div style={S.label}>{label}</div><div style={{fontSize:'1.1rem',color,marginTop:'6px'}}>{value}</div></div>
 }
 
-function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMonth,setSelectedMonth,setView,isHidden,obraSettings}){
+// ── HOME ─────────────────────────────────────────────────────────────
+function HomeView({transactions,ingresos,usdMovements,activeEntities,entityMovements,selectedMonth,setSelectedMonth,setView,isHidden}){
   const {month,year}=selectedMonth
   const mTxs=transactions.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
   const mIngs=ingresos.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
@@ -156,7 +176,14 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
   const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
   const bal=totalI-totalG
   const usdTot=usdMovements.reduce((s,m)=>s+(m.usd100||0)+(m.usd_cambio||0),0)
-  const mamaDeuda=mamaMovements.reduce((s,m)=>s+(m.amount||0),0)
+
+  // Diferencia neta entre lo que te deben y lo que debés, por moneda.
+  const netByCurrency = activeEntities.reduce((acc,e)=>{
+    const b = entityBalance(e, entityMovements)
+    acc.ARS += b.ARS; acc.USD += b.USD
+    return acc
+  },{ARS:0,USD:0})
+
   const prev=()=>{const d=new Date(year,month-1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const next=()=>{const d=new Date(year,month+1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   return (
@@ -174,16 +201,17 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
         <div style={S.label}>Balance del mes</div>
         <div style={{fontSize:'1.6rem',color:bal>=0?'#6e9e6e':'#c87070',marginTop:'6px'}}>{fmt(bal)}</div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:isHidden('mama')?'1fr':'1fr 1fr',gap:'12px',marginBottom:'22px'}}>
+      <div style={{display:'grid',gridTemplateColumns:isHidden('entities')?'1fr':'1fr 1fr',gap:'12px',marginBottom:'22px'}}>
         <div style={S.card}>
           <div style={S.label}>Dólares en caja</div>
-          <div style={{fontSize:'1.2rem',color:'#c8a96e',marginTop:'6px'}}>USD {usdTot.toLocaleString('es-AR')}</div>
+          <div style={{fontSize:'1.2rem',color:'#c8a96e',marginTop:'6px'}}>{fmtUsd(usdTot)}</div>
         </div>
-        {!isHidden('mama')&&(
+        {!isHidden('entities')&&(
           <div style={S.card}>
-            <div style={S.label}>Deuda mamá</div>
-            <div style={{fontSize:'1.1rem',color:mamaDeuda>0?'#c87070':'#6e9e6e',marginTop:'6px'}}>USD {Math.abs(mamaDeuda).toLocaleString('es-AR',{maximumFractionDigits:2})}</div>
-            <div style={{fontSize:'0.62rem',color:'#555',marginTop:'2px'}}>{mamaDeuda>0?'te debe':'le debés'}</div>
+            <div style={S.label}>Diferencia deudores/acreedores</div>
+            {netByCurrency.ARS===0&&netByCurrency.USD===0&&<div style={{fontSize:'0.95rem',color:'#555',marginTop:'6px'}}>Sin saldos</div>}
+            {netByCurrency.ARS!==0&&<div style={{fontSize:'1rem',color:netByCurrency.ARS>0?'#6e9e6e':'#c87070',marginTop:'6px'}}>{fmt(Math.abs(netByCurrency.ARS))} {netByCurrency.ARS>0?'a favor':'en contra'}</div>}
+            {netByCurrency.USD!==0&&<div style={{fontSize:'1rem',color:netByCurrency.USD>0?'#6e9e6e':'#c87070',marginTop:'4px'}}>{fmtUsd(Math.abs(netByCurrency.USD))} {netByCurrency.USD>0?'a favor':'en contra'}</div>}
           </div>
         )}
       </div>
@@ -200,35 +228,34 @@ function HomeView({transactions,ingresos,usdMovements,mamaMovements,selectedMont
 }
 
 // ── CHAT ─────────────────────────────────────────────────────────────
-function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIngresos,setUSDMov,setMamaMov,setObraMov}){
+function ChatView({categories,activeEntities,activeProjects,setTransactions,setIngresos,setUSDMov,setEntities,setEntityMov,setProjects,setProjectMov}){
   const [input,setInput]=useState('')
-  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $10.000 salud corte bri  ← categoría + detalle\n• $8.300 súper\n• $150.000 obra flete  ← gasto obra en pesos, pide cotización\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• $150.000 le pasé a mami  ← te pido cotización USD\n• + usd 1000 alquiler chinos mama  ← resta deuda + suma caja USD\n\nPodés pegar varias líneas o subir un PDF con 📄'}])
+  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $10.000 salud corte bri  ← categoría + detalle\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• marina + usd 1000  ← cobraste, resta deuda de Marina\n• le presté 50.000 a dani  ← sale de tu bolsillo\n• $150.000 obra flete  ← gasto de proyecto en pesos, pide cotización\n• ajuste -$3.500  ← ajuste de cierre de caja\n\nPodés pegar varias líneas o subir un PDF con 📄'}])
   const [loading,setLoading]=useState(false)
   const [pending,setPending]=useState([])
-  // waitingFor: null | 'confirm' | 'cotiz_mama' | 'cotiz_obra' | 'obra_category'
+  // waitingFor: null | 'confirm' | 'entity_type' | 'project_choice' | 'project_category' | 'project_cotiz'
   const [waitingFor,setWaitingFor]=useState(null)
-  const [pendingObraItems,setPendingObraItems]=useState([]) // items obra que necesitan cotización/categoría
-  const [currentObraIdx,setCurrentObraIdx]=useState(0)
-  // PDF category editing
-  const [editingCatIdx,setEditingCatIdx]=useState(null)
   const bottomRef=useRef(),fileRef=useRef()
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[messages])
   const addMsg=(role,text,extra={})=>setMessages(p=>[...p,{role,text,...extra}])
 
-  const guardar=async(parsed,mamasCotiz,obraResolved)=>{
+  // Refs para las colas de resolución multi-paso
+  const entityQueueRef=useRef([])       // nombres nuevos de entidades por resolver (tipo deudor/acreedor)
+  const newEntityTypesRef=useRef({})    // name -> 'deudor'|'acreedor' ya resuelto en este envío
+  const projectQueueRef=useRef([])      // índices en "pending" de items project_gasto por resolver
+  const projectQueueIdxRef=useRef(0)
+  const pendingRef=useRef([])           // copia mutable de pending mientras se resuelve
+
+  const finalizeAndSave=async()=>{
+    await guardar(pendingRef.current)
+  }
+
+  const guardar=async(parsed)=>{
     const dateStr=new Date().toISOString().split('T')[0]
-    const gastos=[],usds=[],ings=[],mamas=[],obras=[]
-    parsed.forEach(t=>{
+    const gastos=[],usds=[],ings=[],entMovs=[],projMovs=[]
+    for(const t of parsed){
       if(t.type==='gasto'){
         gastos.push({date:dateStr,amount:t.amount||0,category:t.category,description:t.description||''})
-      }
-      else if(t.type==='gasto_mama_pesos'){
-        const monto=t.amount||0
-        gastos.push({date:dateStr,amount:monto,category:'Mamá',description:t.description||''})
-        if(mamasCotiz&&mamasCotiz>0){
-          const usdEquiv=parseFloat((monto/mamasCotiz).toFixed(2))
-          mamas.push({date:dateStr,amount:usdEquiv,description:`${t.description||'Gasto mamá'} ($${monto.toLocaleString('es-AR')} @ $${mamasCotiz})`,type:'gasto_mama'})
-        }
       }
       else if(t.type==='ingreso'){
         ings.push({date:dateStr,amount:t.amount||0,description:t.description||''})
@@ -236,130 +263,147 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
       else if(t.type==='usd'){
         usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate||null,peso_amount:t.peso_amount||null})
       }
-      else if(t.type==='mama_pago_usd'){
-        const usdAmt=t.usd_amount||0
-        mamas.push({date:dateStr,amount:-usdAmt,description:t.description||'Pago mamá en USD',type:'pago_cuenta'})
-        usds.push({date:dateStr,usd100:usdAmt,usd_cambio:0,description:t.description||'Pago mamá',exchange_rate:null,peso_amount:null})
+      else if(t.type==='entity_movement'){
+        let entity=matchByName(activeEntities,t.entity_name)
+        if(!entity && newEntityTypesRef.current[t.entity_name]){
+          entity=await db.saveEntity({name:t.entity_name,type:newEntityTypesRef.current[t.entity_name]})
+          setEntities(p=>[...p,entity])
+        }
+        if(!entity) continue // por seguridad, si no se pudo resolver no se guarda huérfano
+        entMovs.push({entity_id:entity.id,date:dateStr,amount:t.amount||0,currency:t.currency||'ARS',description:t.description||''})
       }
-    })
-    // Resolved obra items
-    if(obraResolved){
-      obraResolved.forEach(o=>{
-        const monto=o.amount||0
-        gastos.push({date:dateStr,amount:monto,category:'Obra',description:o.description||''})
-        obras.push({date:dateStr,category:o.obra_category,description:o.description||'',usd:parseFloat((monto/o.cotiz).toFixed(2)),obra_name:obraSettings.activeObra})
-      })
+      else if(t.type==='project_gasto'){
+        const project=matchByName(activeProjects,t.project_name)
+        if(!project) continue
+        const monto=t.amount||0
+        const rate=t.exchange_rate||1
+        gastos.push({date:dateStr,amount:monto,category:'Obra',description:t.description||''})
+        projMovs.push({project_id:project.id,date:dateStr,category:t.category||'Otro',description:t.description||'',amount:parseFloat((monto/rate).toFixed(2)),currency:'USD',exchange_rate:rate})
+      }
     }
-
     if(gastos.length){const saved=await db.insertTransactions(gastos);setTransactions(p=>[...p,...(saved||gastos)])}
     for(const u of usds){const s=await db.insertUSD(u);setUSDMov(p=>[...p,s||u])}
     for(const i of ings){const s=await db.insertIngreso(i);setIngresos(p=>[...p,s||i])}
-    for(const m of mamas){const s=await db.insertMama(m);setMamaMov(p=>[...p,s||m])}
-    for(const o of obras){const s=await db.insertObra(o);setObraMov(p=>[...p,s||o])}
+    for(const m of entMovs){const s=await db.insertEntityMovement(m);setEntityMov(p=>[...p,s||m])}
+    for(const m of projMovs){const s=await db.insertProjectMovement(m);setProjectMov(p=>[...p,s||m])}
 
-    setPending([]);setWaitingFor(null);setPendingObraItems([]);setCurrentObraIdx(0)
+    setPending([]);setWaitingFor(null)
+    entityQueueRef.current=[];newEntityTypesRef.current={};projectQueueRef.current=[];projectQueueIdxRef.current=0;pendingRef.current=[]
     addMsg('assistant','✓ Guardado correctamente.')
   }
 
-  // Multi-step obra flow state
-  const obraFlowRef=useRef({items:[],resolved:[],parsed:null,mamasCotiz:null})
+  const summarize=(parsed)=>parsed.map(t=>{
+    if(t.type==='usd')return `💱 Cambio: ${t.usd_amount>0?'+':''}${t.usd_amount} USD @ $${t.exchange_rate} → ${fmt(t.peso_amount)}`
+    if(t.type==='ingreso')return `💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
+    if(t.type==='entity_movement')return `${t.amount>=0?'💵':'➖'} ${t.entity_name}: ${t.amount>=0?'+':''}${t.amount} ${t.currency}${t.description?' — '+t.description:''}`
+    if(t.type==='project_gasto')return `⚒ ${t.project_name||'Proyecto'} (pesos→USD): ${fmt(t.amount)} — ${t.description}${t.category?' ['+t.category+']':''}`
+    return `📌 ${t.category}: ${fmt(t.amount)}${t.description?' — '+t.description:''}`
+  }).join('\n')
 
-  const startObraFlow=(parsed,mamasCotiz,obraItems)=>{
-    obraFlowRef.current={items:obraItems,resolved:[],parsed,mamasCotiz}
-    setPendingObraItems(obraItems)
-    setCurrentObraIdx(0)
-    askNextObra(obraItems,0)
+  // Arranca la cadena de resolución: primero entidades nuevas, después proyectos pendientes.
+  const startResolution=(parsed)=>{
+    pendingRef.current=parsed
+    const newNames=[...new Set(parsed.filter(t=>t.type==='entity_movement'&&t.is_new).map(t=>t.entity_name))]
+    entityQueueRef.current=newNames
+    projectQueueRef.current=parsed.map((t,i)=>t.type==='project_gasto'?i:null).filter(i=>i!==null)
+    projectQueueIdxRef.current=0
+    askNextInQueue()
   }
 
-  const askNextObra=(items,idx)=>{
-    const item=items[idx]
-    if(!item)return
-    if(!item.obra_category){
-      const catList=activeObraCats.join(', ')
-      addMsg('assistant',`Gasto obra "${item.description}" (${fmt(item.amount)})\n¿A qué categoría pertenece?\n${catList}`)
-      setWaitingFor('obra_category')
-    } else {
-      addMsg('assistant',`Gasto obra "${item.description}" (${fmt(item.amount)}) → ${item.obra_category}\n¿A qué cotización dólar lo registro?`)
-      setWaitingFor('cotiz_obra')
+  const askNextInQueue=()=>{
+    if(entityQueueRef.current.length){
+      const name=entityQueueRef.current[0]
+      addMsg('assistant',`"${name}" no está en tu lista de deudores/acreedores. ¿Es deudor (te debe a vos) o acreedor (vos le debés)?`)
+      setWaitingFor('entity_type')
+      return
     }
+    if(projectQueueIdxRef.current<projectQueueRef.current.length){
+      askProjectStep()
+      return
+    }
+    finishResolution()
+  }
+
+  const askProjectStep=()=>{
+    const idx=projectQueueRef.current[projectQueueIdxRef.current]
+    const item=pendingRef.current[idx]
+    if(!item.project_name){
+      addMsg('assistant',`¿A qué proyecto pertenece "${item.description||'ese gasto'}"? (${activeProjects.map(p=>p.name).join(', ')})`)
+      setWaitingFor('project_choice')
+      return
+    }
+    const project=matchByName(activeProjects,item.project_name)
+    const cats=project?.categories||DEFAULT_PROJECT_CATS
+    if(!item.category){
+      addMsg('assistant',`Gasto de "${project?.name||item.project_name}" (${fmt(item.amount)})\n¿A qué categoría pertenece?\n${cats.join(', ')}`)
+      setWaitingFor('project_category')
+      return
+    }
+    addMsg('assistant',`${project?.name||item.project_name} → ${item.category} (${fmt(item.amount)})\n¿A qué cotización dólar lo registro?`)
+    setWaitingFor('project_cotiz')
+  }
+
+  const finishResolution=()=>{
+    addMsg('assistant',`Entendí ${pendingRef.current.length} movimiento${pendingRef.current.length>1?'s':''}:\n\n${summarize(pendingRef.current)}\n\n¿Lo guardo?`,{txs:pendingRef.current})
+    setWaitingFor('confirm')
   }
 
   const handleSend=async()=>{
     if(!input.trim()||loading)return
     const text=input.trim()
 
-    if(waitingFor==='cotiz_mama'){
+    if(waitingFor==='entity_type'){
+      setInput('');addMsg('user',text)
+      const t=text.toLowerCase()
+      const type=t.includes('acreed')?'acreedor':t.includes('deud')?'deudor':null
+      if(!type){addMsg('assistant','Respondé "deudor" o "acreedor".');return}
+      const name=entityQueueRef.current[0]
+      newEntityTypesRef.current[name]=type
+      entityQueueRef.current=entityQueueRef.current.slice(1)
+      addMsg('assistant',`Listo, "${name}" queda como ${type}.`)
+      askNextInQueue()
+      return
+    }
+
+    if(waitingFor==='project_choice'){
+      setInput('');addMsg('user',text)
+      const idx=projectQueueRef.current[projectQueueIdxRef.current]
+      const matched=matchByName(activeProjects,text)
+      if(!matched){addMsg('assistant',`No encontré ese proyecto. Opciones: ${activeProjects.map(p=>p.name).join(', ')}`);return}
+      pendingRef.current[idx]={...pendingRef.current[idx],project_name:matched.name}
+      askProjectStep()
+      return
+    }
+
+    if(waitingFor==='project_category'){
+      setInput('');addMsg('user',text)
+      const idx=projectQueueRef.current[projectQueueIdxRef.current]
+      const item=pendingRef.current[idx]
+      const project=matchByName(activeProjects,item.project_name)
+      const cats=project?.categories||DEFAULT_PROJECT_CATS
+      const matched=cats.find(c=>c.toLowerCase()===text.toLowerCase())||cats.find(c=>c.toLowerCase().includes(text.toLowerCase()))||text
+      pendingRef.current[idx]={...item,category:matched}
+      askProjectStep()
+      return
+    }
+
+    if(waitingFor==='project_cotiz'){
       setInput('')
       const val=parseFloat(text.replace(',','.'))
       if(!val||val<100){addMsg('assistant','Ingresá una cotización válida, ej: 1400');return}
       addMsg('user',text)
-      const obraItems=pending.filter(t=>t.type==='obra_pesos')
-      if(obraItems.length){
-        await guardar(pending.filter(t=>t.type!=='obra_pesos'),val,null)
-        startObraFlow(pending,val,obraItems)
-      } else {
-        await guardar(pending,val,null)
-      }
-      return
-    }
-
-    if(waitingFor==='obra_category'){
-      setInput('')
-      addMsg('user',text)
-      const items=[...pendingObraItems]
-      const matched=activeObraCats.find(c=>c.toLowerCase()===text.toLowerCase())||activeObraCats.find(c=>c.toLowerCase().includes(text.toLowerCase()))
-      const cat=matched||text
-      items[currentObraIdx]={...items[currentObraIdx],obra_category:cat}
-      setPendingObraItems(items)
-      obraFlowRef.current.items=items
-      addMsg('assistant',`Categoría: ${cat}\n¿A qué cotización dólar lo registro?`)
-      setWaitingFor('cotiz_obra')
-      return
-    }
-
-    if(waitingFor==='cotiz_obra'){
-      setInput('')
-      const val=parseFloat(text.replace(',','.'))
-      if(!val||val<100){addMsg('assistant','Ingresá una cotización válida, ej: 1400');return}
-      addMsg('user',text)
-      const items=obraFlowRef.current.items
-      const resolved=[...obraFlowRef.current.resolved,{...items[currentObraIdx],cotiz:val}]
-      obraFlowRef.current.resolved=resolved
-      const nextIdx=currentObraIdx+1
-      if(nextIdx<items.length){
-        setCurrentObraIdx(nextIdx)
-        askNextObra(items,nextIdx)
-      } else {
-        await guardar(obraFlowRef.current.parsed||pending,obraFlowRef.current.mamasCotiz,resolved)
-      }
+      const idx=projectQueueRef.current[projectQueueIdxRef.current]
+      pendingRef.current[idx]={...pendingRef.current[idx],exchange_rate:val}
+      projectQueueIdxRef.current+=1
+      askNextInQueue()
       return
     }
 
     setInput('');setLoading(true);addMsg('user',text)
     try{
-      const parsed=await parseChat(text,categories,activeObraCats)
+      const parsed=await parseChat(text,categories,activeEntities,activeProjects)
       if(!parsed.length){addMsg('assistant','No pude interpretar ese texto. Intentá de nuevo.');setLoading(false);return}
-      setPending(parsed)
-      const tieneMamaPesos=parsed.some(t=>t.type==='gasto_mama_pesos')
-      const tieneObra=parsed.some(t=>t.type==='obra_pesos')
-      const summary=parsed.map(t=>{
-        if(t.type==='usd')           return `💱 Cambio: ${t.usd_amount>0?'+':''}${t.usd_amount} USD @ $${t.exchange_rate} → ${fmt(t.peso_amount)}`
-        if(t.type==='ingreso')       return `💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
-        if(t.type==='mama_pago_usd') return `👩💵 Pago mamá en USD: +${t.usd_amount} USD\n   → +USD en caja  |  −USD en deuda mamá`
-        if(t.type==='gasto_mama_pesos') return `👩 Gasto por mamá: ${fmt(t.amount)} — ${t.description}\n   (se convertirá a USD según cotización)`
-        if(t.type==='obra_pesos')    return `⚒ Obra (pesos→USD): ${fmt(t.amount)} — ${t.description}${t.obra_category?' ['+t.obra_category+']':''}\n   (egreso del mes + suma en Obra en USD)`
-        return `📌 ${t.category}: ${fmt(t.amount)}${t.description?' — '+t.description:''}`
-      }).join('\n')
-      if(tieneMamaPesos){
-        addMsg('assistant',`Entendí ${parsed.length} movimiento${parsed.length>1?'s':''}:\n\n${summary}\n\n¿A qué cotización USD registro los gastos de mamá?`)
-        setWaitingFor('cotiz_mama')
-      } else if(tieneObra&&!tieneMamaPesos){
-        addMsg('assistant',`Entendí ${parsed.length} movimiento${parsed.length>1?'s':''}:\n\n${summary}\n\n¿Lo guardo? (los gastos de obra te van a pedir cotización a continuación)`,{txs:parsed})
-        setWaitingFor('confirm')
-      } else {
-        addMsg('assistant',`Entendí ${parsed.length} movimiento${parsed.length>1?'s':''}:\n\n${summary}\n\n¿Lo guardo?`,{txs:parsed})
-        setWaitingFor('confirm')
-      }
+      startResolution(parsed)
     }catch(e){
       addMsg('assistant',e.message==='NO_API_KEY'?'⚠️ Falta la API key de Gemini.':`Error: ${e.message}`)
     }
@@ -367,15 +411,7 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
   }
 
   const handleConfirm=async()=>{
-    const obraItems=pending.filter(t=>t.type==='obra_pesos')
-    const nonObra=pending.filter(t=>t.type!=='obra_pesos')
-    if(obraItems.length){
-      await guardar(nonObra,null,null)
-      startObraFlow(pending,null,obraItems)
-    } else {
-      await guardar(pending,null,null)
-    }
-    setWaitingFor(null)
+    await finalizeAndSave()
   }
 
   const handlePDF=async(e)=>{
@@ -385,7 +421,9 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
       const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)})
       const parsed=await parsePDF(base64,categories)
       if(!parsed.length){addMsg('assistant','No encontré consumos en el PDF.');setLoading(false);return}
-      const withType=parsed.map(t=>({...t,type:'gasto'}));setPending(withType)
+      const withType=parsed.map(t=>({...t,type:'gasto'}))
+      pendingRef.current=withType
+      setPending(withType)
       setWaitingFor('confirm')
       addMsg('assistant',
         `Encontré ${parsed.length} consumos:\n\n${parsed.slice(0,8).map((t,i)=>`${i+1}. ${t.description}${t.installment?' ('+t.installment+')':''}: ${fmt(t.amount)} → ${t.category}`).join('\n')}${parsed.length>8?`\n...y ${parsed.length-8} más`:''}\n\nPara cambiar una categoría escribí el número y la nueva categoría, ej: "3 Salidas"\nO escribí "guardar" para confirmar.`,
@@ -395,7 +433,6 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
     setLoading(false);e.target.value=''
   }
 
-  // Handle PDF category edit input
   const handleSendPDF=async()=>{
     if(!input.trim()||loading)return
     const text=input.trim().toLowerCase()
@@ -404,22 +441,18 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
       await handleConfirm()
       return
     }
-    // Try to parse "N Category"
     const match=input.trim().match(/^(\d+)\s+(.+)$/)
-    if(match&&pending.length){
+    if(match&&pendingRef.current.length){
       const idx=parseInt(match[1])-1
       const newCat=match[2]
-      if(idx>=0&&idx<pending.length){
-        const updated=[...pending]
-        updated[idx]={...updated[idx],category:newCat}
-        setPending(updated)
+      if(idx>=0&&idx<pendingRef.current.length){
+        pendingRef.current[idx]={...pendingRef.current[idx],category:newCat}
         setInput('')
         addMsg('user',input.trim())
         addMsg('assistant',`Categoría ${idx+1} cambiada a "${newCat}".\n\nEscribí otro número para seguir editando o "guardar" para confirmar.`)
         return
       }
     }
-    // fallthrough to normal send
     await handleSend()
   }
 
@@ -435,11 +468,8 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
               background:m.role==='user'?'#1e1a10':'#1a1a1a',
               border:m.role==='user'?'1px solid #3a3020':'1px solid #222',
               color:m.role==='user'?'#c8a96e':'#e8dcc8'}}>{m.text}</div>
-            {m.txs&&m.role==='assistant'&&!m.isPDF&&(
-              <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>✓ Confirmar y guardar</button>
-            )}
-            {m.txs&&m.role==='assistant'&&m.isPDF&&(
-              <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>✓ Guardar todos</button>
+            {m.txs&&m.role==='assistant'&&(
+              <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>{m.isPDF?'✓ Guardar todos':'✓ Confirmar y guardar'}</button>
             )}
           </div>
         ))}
@@ -452,15 +482,16 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
         <textarea value={input} onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();isPDFMode?handleSendPDF():handleSend()}}}
           placeholder={
-            waitingFor==='cotiz_mama'?'Cotización USD (ej: 1400)...':
-            waitingFor==='cotiz_obra'?'Cotización dólar blue (ej: 1400)...':
-            waitingFor==='obra_category'?`Categoría de obra (${activeObraCats.join(', ')})...`:
+            waitingFor==='entity_type'?'deudor o acreedor...':
+            waitingFor==='project_choice'?'Nombre del proyecto...':
+            waitingFor==='project_category'?'Categoría del proyecto...':
+            waitingFor==='project_cotiz'?'Cotización dólar blue (ej: 1400)...':
             isPDFMode?'Nro + categoría para editar, o "guardar"...':
             '$14.000 pizza  o pegá varias líneas...'
           }
           rows={1} style={{flex:1,
-            background:waitingFor?'#1a1810':'#1a1a1a',
-            border:`1px solid ${waitingFor?'#3a3020':'#222'}`,
+            background:waitingFor&&waitingFor!=='confirm'?'#1a1810':'#1a1a1a',
+            border:`1px solid ${waitingFor&&waitingFor!=='confirm'?'#3a3020':'#222'}`,
             color:'#e8dcc8',padding:'10px 12px',borderRadius:'8px',fontSize:'0.88rem',resize:'none',minHeight:'42px',maxHeight:'120px',fontFamily:'Georgia,serif',outline:'none'}}/>
         <button onClick={isPDFMode?handleSendPDF:handleSend} disabled={loading}
           style={{...S.btnGold,flexShrink:0,opacity:loading?0.4:1,padding:'10px 18px',fontSize:'1.1rem'}}>›</button>
@@ -470,7 +501,7 @@ function ChatView({categories,activeObraCats,obraSettings,setTransactions,setIng
 }
 
 // ── MONTHLY ───────────────────────────────────────────────────────────
-function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovements,obraMovements,categories,selectedMonth,setSelectedMonth,mamaMovements}){
+function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovements,categories,selectedMonth,setSelectedMonth}){
   const {month,year}=selectedMonth
   const [tab,setTab]=useState('resumen')
   const [showAddIng,setShowAddIng]=useState(false)
@@ -492,7 +523,7 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   }
   const prev=()=>{const d=new Date(year,month-1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const next=()=>{const d=new Date(year,month+1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
-  const handleExport=()=>exportToExcel({transactions,ingresos,usdMovements,obraMovements,categories,month,year})
+  const handleExport=()=>exportToExcel({transactions,ingresos,usdMovements,categories,month,year})
   return (
     <div style={{padding:'20px'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
@@ -585,7 +616,7 @@ function USDView({usdMovements,setUSDMov}){
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Caja USD</h2>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px',marginBottom:'16px'}}>
         {[['Billetes',usd100Tot],['Cambio',usdCambioTot],['Total',usd100Tot+usdCambioTot]].map(([l,v])=>(
-          <div key={l} style={S.card}><div style={S.label}>{l}</div><div style={{fontSize:'1rem',color:'#c8a96e',marginTop:'6px'}}>USD {v.toLocaleString()}</div></div>
+          <div key={l} style={S.card}><div style={S.label}>{l}</div><div style={{fontSize:'1rem',color:'#c8a96e',marginTop:'6px'}}>{fmtUsd(v)}</div></div>
         ))}
       </div>
       {show&&(
@@ -622,76 +653,253 @@ function USDView({usdMovements,setUSDMov}){
   )
 }
 
-// ── OBRA ──────────────────────────────────────────────────────────────
-function ObraView({obraMovements,setObraMov,obraSettings,setObraSettings}){
-  const activeObra=obraSettings.activeObra||'Libertad'
-  const obraCats=obraSettings.obras?.[activeObra]||['Materiales','Mano de obra','Dirección de obra','Mobiliario/equipamiento','Otro']
-  const obrasList=Object.keys(obraSettings.obras||{Libertad:[]})
-  const filtered=obraMovements.filter(m=>!m.obra_name||m.obra_name===activeObra)
-  const [form,setForm]=useState({date:'',category:obraCats[0]||'Materiales',description:'',usd:''})
-  const [show,setShow]=useState(false)
-  const totalUSD=filtered.reduce((s,m)=>s+(m.usd||0),0)
-  const byCat=obraCats.reduce((acc,c)=>{acc[c]=filtered.filter(m=>m.category===c).reduce((s,m)=>s+(m.usd||0),0);return acc},{})
-  const add_=async()=>{
-    if(!form.usd)return
-    const mv={date:form.date||new Date().toISOString().split('T')[0],category:form.category,description:form.description,usd:parseFloat(form.usd)||0,obra_name:activeObra}
-    const saved=await db.insertObra(mv);setObraMov(p=>[...p,saved||mv]);setForm({date:'',category:obraCats[0],description:'',usd:''});setShow(false)
-  }
-  const del=async m=>{await db.deleteObra(m.id);setObraMov(p=>p.filter(x=>x.id!==m.id))}
+// ── DEUDORES / ACREEDORES ───────────────────────────────────────────────
+function EntitiesView({entities,setEntities,entityMovements,setEntityMov}){
+  const [selectedId,setSelectedId]=useState(null)
+  const [showNew,setShowNew]=useState(false)
+  const [newEnt,setNewEnt]=useState({name:'',type:'deudor'})
+  const [form,setForm]=useState({date:'',amount:'',currency:'ARS',description:'',direction:'recibo'})
+  const [showForm,setShowForm]=useState(false)
 
-  return (
-    <div style={{padding:'20px'}}>
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px'}}>
-        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>Obra {activeObra}</h2>
-        {obrasList.length>1&&(
-          <select value={activeObra} onChange={async e=>{
-            const updated={...obraSettings,activeObra:e.target.value}
-            setObraSettings(updated);await db.saveObraSettings(updated)
-          }} style={{...S.input,width:'auto',fontSize:'0.75rem',padding:'6px 10px'}}>
-            {obrasList.map(o=><option key={o} value={o}>{o}</option>)}
-          </select>
+  const selected=entities.find(e=>e.id===selectedId)
+
+  const createEntity=async()=>{
+    if(!newEnt.name.trim())return
+    const saved=await db.saveEntity({name:newEnt.name.trim(),type:newEnt.type})
+    setEntities(p=>[...p,saved])
+    setSelectedId(saved.id);setNewEnt({name:'',type:'deudor'});setShowNew(false)
+  }
+
+  const addMovement=async()=>{
+    if(!selected||!form.amount)return
+    const signedAmount=form.direction==='recibo'?Math.abs(parseFloat(form.amount)):-Math.abs(parseFloat(form.amount))
+    const mv={entity_id:selected.id,date:form.date||new Date().toISOString().split('T')[0],amount:signedAmount,currency:form.currency,description:form.description}
+    const saved=await db.insertEntityMovement(mv)
+    setEntityMov(p=>[...p,saved||mv])
+    setForm({date:'',amount:'',currency:'ARS',description:'',direction:'recibo'});setShowForm(false)
+  }
+  const delMovement=async m=>{await db.deleteEntityMovement(m.id);setEntityMov(p=>p.filter(x=>x.id!==m.id))}
+  const toggleStatus=async e=>{const updated=await db.setEntityStatus(e.id,e.status==='cerrado'?'activo':'cerrado');setEntities(p=>p.map(x=>x.id===e.id?{...x,...updated}:x))}
+
+  if(!selected){
+    return (
+      <div style={{padding:'20px'}}>
+        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Deudores / Acreedores</h2>
+        {entities.length===0&&<div style={{color:'#555',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Todavía no agregaste a nadie.</div>}
+        {entities.map(e=>{
+          const b=entityBalance(e,entityMovements)
+          return (
+            <button key={e.id} onClick={()=>setSelectedId(e.id)} style={{...S.card,width:'100%',textAlign:'left',marginBottom:'8px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:e.status==='cerrado'?0.5:1}}>
+              <div>
+                <div style={{fontSize:'0.92rem',color:'#ddd'}}>{e.name}{e.status==='cerrado'?' (cerrado)':''}</div>
+                <div style={{fontSize:'0.68rem',color:'#666',marginTop:'2px',textTransform:'uppercase',letterSpacing:'0.06em'}}>{e.type==='deudor'?'te debe':'le debés'}</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                {b.ARS!==0&&<div style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmt(Math.abs(b.ARS))}</div>}
+                {b.USD!==0&&<div style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmtUsd(Math.abs(b.USD))}</div>}
+                {b.ARS===0&&b.USD===0&&<div style={{fontSize:'0.8rem',color:'#444'}}>saldado</div>}
+              </div>
+            </button>
+          )
+        })}
+        {showNew?(
+          <div style={{...S.card,marginTop:'10px'}}>
+            <input placeholder="Nombre (ej: Marina)" value={newEnt.name} onChange={e=>setNewEnt({...newEnt,name:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
+            <select value={newEnt.type} onChange={e=>setNewEnt({...newEnt,type:e.target.value})} style={{...S.input,background:'#111',marginBottom:'8px'}}>
+              <option value="deudor">Deudor (me debe a mí)</option>
+              <option value="acreedor">Acreedor (yo le debo)</option>
+            </select>
+            <div style={{display:'flex',gap:'8px'}}>
+              <button onClick={createEntity} style={{...S.btnGold,flex:1}}>Crear</button>
+              <button onClick={()=>setShowNew(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+            </div>
+          </div>
+        ):(
+          <button onClick={()=>setShowNew(true)} style={{...S.btnGray,width:'100%',marginTop:'10px'}}>+ Nuevo deudor/acreedor</button>
         )}
       </div>
-      <div style={{...S.card,marginBottom:'16px',marginTop:'10px'}}>
-        <div style={S.label}>Total USD</div>
-        <div style={{fontSize:'1.4rem',color:'#c8a96e',marginTop:'6px'}}>USD {totalUSD.toLocaleString('es-AR',{maximumFractionDigits:2})}</div>
+    )
+  }
+
+  const b=entityBalance(selected,entityMovements)
+  const myMovs=entityMovements.filter(m=>m.entity_id===selected.id)
+  return (
+    <div style={{padding:'20px'}}>
+      <button onClick={()=>setSelectedId(null)} style={{...S.btnGray,marginBottom:'14px',padding:'6px 12px',fontSize:'0.7rem'}}>← Todos</button>
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px'}}>
+        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
+        <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
       </div>
-      <div style={{...S.card,marginBottom:'16px'}}>
-        <div style={{...S.label,marginBottom:'10px'}}>Por categoría</div>
-        {obraCats.map(c=>(
-          <div key={c} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1e1e1e',fontSize:'0.85rem'}}>
-            <span style={{color:'#bbb'}}>{c}</span>
-            <span style={{color:byCat[c]>0?'#c8a96e':'#333'}}>USD {(byCat[c]||0).toLocaleString('es-AR',{maximumFractionDigits:2})}</span>
+      <div style={{fontSize:'0.68rem',color:'#666',marginBottom:'14px',textTransform:'uppercase',letterSpacing:'0.06em'}}>{selected.type==='deudor'?'Te debe':'Le debés'}</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
+        <MiniCard label="Saldo ARS" value={fmt(Math.abs(b.ARS))} color={b.ARS>=0?'#6e9e6e':'#c87070'}/>
+        <MiniCard label="Saldo USD" value={fmtUsd(Math.abs(b.USD))} color={b.USD>=0?'#6e9e6e':'#c87070'}/>
+      </div>
+      {showForm?(
+        <div style={{...S.card,marginBottom:'14px'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}}>
+            <select value={form.direction} onChange={e=>setForm({...form,direction:e.target.value})} style={{...S.input,background:'#111'}}>
+              <option value="recibo">Recibo plata</option>
+              <option value="entrego">Entrego plata</option>
+            </select>
+            <select value={form.currency} onChange={e=>setForm({...form,currency:e.target.value})} style={{...S.input,background:'#111'}}>
+              <option value="ARS">Pesos</option>
+              <option value="USD">Dólares</option>
+            </select>
+          </div>
+          <input placeholder="Monto" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
+          <input placeholder="Descripción (opcional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button onClick={addMovement} style={{...S.btnGold,flex:1}}>Guardar</button>
+            <button onClick={()=>setShowForm(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+          </div>
+        </div>
+      ):(
+        <button onClick={()=>setShowForm(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar movimiento</button>
+      )}
+      <div style={{maxHeight:'42vh',overflowY:'auto'}}>
+        {[...myMovs].reverse().map((m,i)=>(
+          <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div><div style={{fontSize:'0.7rem',color:'#555'}}>{m.date}</div><div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description||'—'}</div></div>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <span style={{fontSize:'0.88rem',color:m.amount>=0?'#6e9e6e':'#c87070'}}>{m.amount>=0?'+':''}{m.amount.toLocaleString('es-AR')} {m.currency}</span>
+              <button onClick={()=>delMovement(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
+            </div>
           </div>
         ))}
       </div>
-      {show&&(
+    </div>
+  )
+}
+
+// ── PROYECTOS ────────────────────────────────────────────────────────
+function ProjectsView({projects,setProjects,projectMovements,setProjectMov}){
+  const [selectedId,setSelectedId]=useState(null)
+  const [showNew,setShowNew]=useState(false)
+  const [newName,setNewName]=useState('')
+  const [form,setForm]=useState({date:'',category:'',currency:'USD',amount:'',description:''})
+  const [showForm,setShowForm]=useState(false)
+  const [newCat,setNewCat]=useState('')
+
+  const selected=projects.find(p=>p.id===selectedId)
+
+  const createProject=async()=>{
+    if(!newName.trim())return
+    const saved=await db.saveProject({name:newName.trim(),categories:DEFAULT_PROJECT_CATS})
+    setProjects(p=>[...p,saved])
+    setSelectedId(saved.id);setNewName('');setShowNew(false)
+  }
+  const toggleStatus=async pr=>{const updated=await db.setProjectStatus(pr.id,pr.status==='cerrado'?'activo':'cerrado');setProjects(p=>p.map(x=>x.id===pr.id?{...x,...updated}:x))}
+  const addCategory=async()=>{
+    if(!newCat.trim()||!selected)return
+    const updated=await db.saveProject({...selected,categories:[...(selected.categories||[]),newCat.trim()]})
+    setProjects(p=>p.map(x=>x.id===selected.id?updated:x));setNewCat('')
+  }
+  const addMovement=async()=>{
+    if(!selected||!form.amount||!form.category)return
+    const mv={project_id:selected.id,date:form.date||new Date().toISOString().split('T')[0],category:form.category,description:form.description,amount:parseFloat(form.amount)||0,currency:form.currency,exchange_rate:null}
+    const saved=await db.insertProjectMovement(mv)
+    setProjectMov(p=>[...p,saved||mv])
+    setForm({date:'',category:'',currency:'USD',amount:'',description:''});setShowForm(false)
+  }
+  const delMovement=async m=>{await db.deleteProjectMovement(m.id);setProjectMov(p=>p.filter(x=>x.id!==m.id))}
+
+  if(!selected){
+    return (
+      <div style={{padding:'20px'}}>
+        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Proyectos</h2>
+        {projects.length===0&&<div style={{color:'#555',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Todavía no creaste ningún proyecto.</div>}
+        {projects.map(pr=>{
+          const mine=projectMovements.filter(m=>m.project_id===pr.id)
+          const totUSD=mine.filter(m=>m.currency==='USD').reduce((s,m)=>s+(m.amount||0),0)
+          const totARS=mine.filter(m=>m.currency==='ARS').reduce((s,m)=>s+(m.amount||0),0)
+          return (
+            <button key={pr.id} onClick={()=>setSelectedId(pr.id)} style={{...S.card,width:'100%',textAlign:'left',marginBottom:'8px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:pr.status==='cerrado'?0.5:1}}>
+              <div style={{fontSize:'0.92rem',color:'#ddd'}}>{pr.name}{pr.status==='cerrado'?' (cerrado)':''}</div>
+              <div style={{textAlign:'right'}}>
+                {totUSD>0&&<div style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmtUsd(totUSD)}</div>}
+                {totARS>0&&<div style={{fontSize:'0.85rem',color:'#c8a96e'}}>{fmt(totARS)}</div>}
+              </div>
+            </button>
+          )
+        })}
+        {showNew?(
+          <div style={{...S.card,marginTop:'10px'}}>
+            <input placeholder="Nombre del proyecto (ej: Libertad)" value={newName} onChange={e=>setNewName(e.target.value)} style={{...S.input,marginBottom:'8px'}}/>
+            <div style={{display:'flex',gap:'8px'}}>
+              <button onClick={createProject} style={{...S.btnGold,flex:1}}>Crear</button>
+              <button onClick={()=>setShowNew(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+            </div>
+          </div>
+        ):(
+          <button onClick={()=>setShowNew(true)} style={{...S.btnGray,width:'100%',marginTop:'10px'}}>+ Nuevo proyecto</button>
+        )}
+      </div>
+    )
+  }
+
+  const mine=projectMovements.filter(m=>m.project_id===selected.id)
+  const totUSD=mine.filter(m=>m.currency==='USD').reduce((s,m)=>s+(m.amount||0),0)
+  const totARS=mine.filter(m=>m.currency==='ARS').reduce((s,m)=>s+(m.amount||0),0)
+  const cats=selected.categories||DEFAULT_PROJECT_CATS
+  const byCat=cats.reduce((acc,c)=>{acc[c]=mine.filter(m=>m.category===c&&m.currency==='USD').reduce((s,m)=>s+(m.amount||0),0);return acc},{})
+
+  return (
+    <div style={{padding:'20px'}}>
+      <button onClick={()=>setSelectedId(null)} style={{...S.btnGray,marginBottom:'14px',padding:'6px 12px',fontSize:'0.7rem'}}>← Todos</button>
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
+        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
+        <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
+        <MiniCard label="Total USD" value={fmtUsd(totUSD)} color="#c8a96e"/>
+        <MiniCard label="Total ARS" value={fmt(totARS)} color="#c8a96e"/>
+      </div>
+      <div style={{...S.card,marginBottom:'16px'}}>
+        <div style={{...S.label,marginBottom:'10px'}}>Por categoría (USD)</div>
+        {cats.map(c=>(
+          <div key={c} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #1e1e1e',fontSize:'0.85rem'}}>
+            <span style={{color:'#bbb'}}>{c}</span>
+            <span style={{color:byCat[c]>0?'#c8a96e':'#333'}}>{fmtUsd(byCat[c]||0)}</span>
+          </div>
+        ))}
+        <div style={{display:'flex',gap:'6px',marginTop:'10px'}}>
+          <input placeholder="Nueva categoría..." value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCategory()} style={{...S.input,flex:1,fontSize:'0.8rem',padding:'6px 10px'}}/>
+          <button onClick={addCategory} style={{...S.btnGray,padding:'6px 10px'}}>+</button>
+        </div>
+      </div>
+      {showForm?(
         <div style={{...S.card,marginBottom:'14px'}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}}>
-            <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} style={S.input}/>
             <select value={form.category} onChange={e=>setForm({...form,category:e.target.value})} style={{...S.input,background:'#111'}}>
-              {obraCats.map(c=><option key={c}>{c}</option>)}
+              <option value="">Categoría...</option>
+              {cats.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={form.currency} onChange={e=>setForm({...form,currency:e.target.value})} style={{...S.input,background:'#111'}}>
+              <option value="USD">Dólares</option>
+              <option value="ARS">Pesos</option>
             </select>
           </div>
-          <input placeholder="USD" value={form.usd} onChange={e=>setForm({...form,usd:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
+          <input placeholder="Monto" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
           <input placeholder="Descripción (opcional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
           <div style={{display:'flex',gap:'8px'}}>
-            <button onClick={add_} style={{...S.btnGold,flex:1}}>Guardar</button>
-            <button onClick={()=>setShow(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
+            <button onClick={addMovement} style={{...S.btnGold,flex:1}}>Guardar</button>
+            <button onClick={()=>setShowForm(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
           </div>
         </div>
+      ):(
+        <button onClick={()=>setShowForm(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar gasto</button>
       )}
-      {!show&&<button onClick={()=>setShow(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar gasto de obra</button>}
-      <div style={{maxHeight:'38vh',overflowY:'auto'}}>
-        {[...filtered].reverse().map((m,i)=>(
+      <div style={{maxHeight:'34vh',overflowY:'auto'}}>
+        {[...mine].reverse().map((m,i)=>(
           <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div>
               <div style={{fontSize:'0.7rem',color:'#555'}}>{m.date} · {m.category}</div>
               <div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description||'—'}</div>
             </div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-              <span style={{fontSize:'0.85rem',color:'#c8a96e'}}>USD {(m.usd||0).toLocaleString('es-AR',{maximumFractionDigits:2})}</span>
-              <button onClick={()=>del(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
+              <span style={{fontSize:'0.85rem',color:'#c8a96e'}}>{m.currency==='USD'?fmtUsd(m.amount):fmt(m.amount)}</span>
+              <button onClick={()=>delMovement(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
         ))}
@@ -700,82 +908,36 @@ function ObraView({obraMovements,setObraMov,obraSettings,setObraSettings}){
   )
 }
 
-// ── MAMÁ ──────────────────────────────────────────────────────────────
-function MamaView({mamaMovements,setMamaMov}){
-  const [form,setForm]=useState({date:'',amount:'',description:'',type:'gasto_mama'})
-  const [show,setShow]=useState(false)
-  const saldo=mamaMovements.reduce((s,m)=>s+(m.amount||0),0)
-  const add=async()=>{
-    if(!form.amount||!form.description)return
-    const finalAmount=form.type==='pago_cuenta'?-Math.abs(parseFloat(form.amount)):Math.abs(parseFloat(form.amount))
-    const mv={date:form.date||new Date().toISOString().split('T')[0],amount:finalAmount,description:form.description,type:form.type}
-    const saved=await db.insertMama(mv)
-    setMamaMov(p=>[...p,saved||mv])
-    setForm({date:'',amount:'',description:'',type:'gasto_mama'})
-    setShow(false)
-  }
-  const del=async m=>{await db.deleteMama(m.id);setMamaMov(p=>p.filter(x=>x.id!==m.id))}
+// ── NUEVO CONCEPTO (botón "+") ─────────────────────────────────────────
+function NewConceptView({setView}){
   return (
-    <div style={{padding:'20px'}}>
-      <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'6px'}}>Cuenta Mamá</h2>
-      <p style={{fontSize:'0.75rem',color:'#555',marginBottom:'16px',lineHeight:1.5}}>
-        Los gastos con categoría "Mamá" y pagos en USD se registran automáticamente.<br/>
-        Usá este formulario para movimientos manuales.
-      </p>
-      <div style={{...S.card,background:saldo>0?'#1f1a14':'#141f14',borderColor:saldo>0?'#3a2a1e':'#1e3a1e',marginBottom:'16px'}}>
-        <div style={S.label}>Saldo — {saldo>0?'te debe':'le debés'}</div>
-        <div style={{fontSize:'1.8rem',color:saldo>0?'#c8a96e':'#6e9e6e',marginTop:'6px'}}>
-          USD {Math.abs(saldo).toLocaleString('es-AR',{maximumFractionDigits:2})}
+    <div style={{padding:'30px 20px'}}>
+      <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'20px'}}>¿Qué querés crear?</h2>
+      <button onClick={()=>setView('entities')} style={{...S.card,width:'100%',textAlign:'left',cursor:'pointer',marginBottom:'10px',display:'flex',alignItems:'center',gap:'12px'}}>
+        <span style={{fontSize:'1.4rem'}}>♡</span>
+        <div>
+          <div style={{fontSize:'0.92rem',color:'#ddd'}}>Deudor o acreedor</div>
+          <div style={{fontSize:'0.72rem',color:'#666',marginTop:'2px'}}>Una persona que te debe, o a la que le debés</div>
         </div>
-      </div>
-      {show&&(
-        <div style={{...S.card,marginBottom:'14px'}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}}>
-            <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} style={S.input}/>
-            <select value={form.type} onChange={e=>setForm({...form,type:e.target.value})} style={{...S.input,background:'#111'}}>
-              <option value="gasto_mama">Gasto por ella (suma)</option>
-              <option value="pago_cuenta">Pago a cuenta (resta)</option>
-            </select>
-          </div>
-          <input placeholder="Monto en USD" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
-          <input placeholder="Descripción" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
-          <div style={{display:'flex',gap:'8px'}}>
-            <button onClick={add} style={{...S.btnGold,flex:1}}>Guardar</button>
-            <button onClick={()=>setShow(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
-          </div>
+      </button>
+      <button onClick={()=>setView('projects')} style={{...S.card,width:'100%',textAlign:'left',cursor:'pointer',display:'flex',alignItems:'center',gap:'12px'}}>
+        <span style={{fontSize:'1.4rem'}}>⚒</span>
+        <div>
+          <div style={{fontSize:'0.92rem',color:'#ddd'}}>Proyecto</div>
+          <div style={{fontSize:'0.72rem',color:'#666',marginTop:'2px'}}>Una obra o proyecto nuevo para llevar costos</div>
         </div>
-      )}
-      {!show&&<button onClick={()=>setShow(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar movimiento manual</button>}
-      <div style={{maxHeight:'50vh',overflowY:'auto'}}>
-        {[...mamaMovements].reverse().map((m,i)=>(
-          <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <div>
-              <div style={{fontSize:'0.7rem',color:'#555'}}>{m.date} · {m.type==='pago_cuenta'?'Pago a cuenta':'Gasto por ella'}</div>
-              <div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description}</div>
-            </div>
-            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-              <span style={{fontSize:'0.9rem',color:m.amount>=0?'#c87070':'#6e9e6e'}}>{m.amount>=0?'+':''}{(m.amount||0).toLocaleString('es-AR',{maximumFractionDigits:2})} USD</span>
-              <button onClick={()=>del(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
-            </div>
-          </div>
-        ))}
-      </div>
+      </button>
     </div>
   )
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────────
-function SettingsView({categories,setCategories,hiddenSections,setHiddenSections,obraSettings,setObraSettings}){
+function SettingsView({categories,setCategories,hiddenSections,setHiddenSections,entities,projects}){
   const [cats,setCats]=useState([...categories])
   const [newCat,setNewCat]=useState('')
   const [saved,setSaved]=useState(false)
   const [showKey,setShowKey]=useState(false)
   const [newKey,setNewKey]=useState('')
-  // Obra settings
-  const [showObraSettings,setShowObraSettings]=useState(false)
-  const [newObraName,setNewObraName]=useState('')
-  const [editingObraCats,setEditingObraCats]=useState(null) // obra name being edited
-  const [newObraCat,setNewObraCat]=useState('')
 
   const add=()=>{if(!newCat.trim())return;setCats([...cats,newCat.trim()]);setNewCat('')}
   const remove=i=>setCats(cats.filter((_,ci)=>ci!==i))
@@ -785,28 +947,7 @@ function SettingsView({categories,setCategories,hiddenSections,setHiddenSections
     const updated=hiddenSections.includes(s)?hiddenSections.filter(x=>x!==s):[...hiddenSections,s]
     setHiddenSections(updated);await db.saveHiddenSections(updated)
   }
-  const sectionLabels={obra:'⚒ Obra',mama:'♡ Cuenta Mamá'}
-
-  const addObra=async()=>{
-    if(!newObraName.trim())return
-    const updated={...obraSettings,obras:{...obraSettings.obras,[newObraName.trim()]:['Materiales','Mano de obra','Dirección de obra','Mobiliario/equipamiento','Otro']}}
-    setObraSettings(updated);await db.saveObraSettings(updated);setNewObraName('')
-  }
-  const setActiveObra=async name=>{
-    const updated={...obraSettings,activeObra:name}
-    setObraSettings(updated);await db.saveObraSettings(updated)
-  }
-  const addObraCat=async(obraName)=>{
-    if(!newObraCat.trim())return
-    const currentCats=obraSettings.obras[obraName]||[]
-    const updated={...obraSettings,obras:{...obraSettings.obras,[obraName]:[...currentCats,newObraCat.trim()]}}
-    setObraSettings(updated);await db.saveObraSettings(updated);setNewObraCat('')
-  }
-  const removeObraCat=async(obraName,idx)=>{
-    const currentCats=obraSettings.obras[obraName]||[]
-    const updated={...obraSettings,obras:{...obraSettings.obras,[obraName]:currentCats.filter((_,i)=>i!==idx)}}
-    setObraSettings(updated);await db.saveObraSettings(updated)
-  }
+  const sectionLabels={entities:'♡ Deudores/Acreedores',projects:'⚒ Proyectos'}
 
   return (
     <div style={{padding:'20px'}}>
@@ -815,60 +956,16 @@ function SettingsView({categories,setCategories,hiddenSections,setHiddenSections
       {/* Secciones opcionales */}
       <div style={{...S.label,marginBottom:'12px'}}>Secciones opcionales</div>
       <div style={{...S.card,marginBottom:'20px'}}>
-        <p style={{fontSize:'0.75rem',color:'#555',margin:'0 0 12px',lineHeight:1.5}}>Ocultá secciones que ya no uses. Los datos no se borran.</p>
+        <p style={{fontSize:'0.75rem',color:'#555',margin:'0 0 12px',lineHeight:1.5}}>Ocultá secciones que ya no uses. Los datos no se borran. Para cerrar una persona o un proyecto puntual sin ocultar toda la sección, usá el botón "Cerrar" dentro de cada uno.</p>
         {ALL_SECTIONS.map(s=>(
           <div key={s} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid #1a1a1a'}}>
-            <span style={{fontSize:'0.88rem',color:hiddenSections.includes(s)?'#444':'#ccc'}}>{sectionLabels[s]}</span>
+            <span style={{fontSize:'0.88rem',color:hiddenSections.includes(s)?'#444':'#ccc'}}>{sectionLabels[s]} {s==='entities'?`(${entities.length})`:`(${projects.length})`}</span>
             <button onClick={()=>toggleSection(s)} style={{...hiddenSections.includes(s)?S.btnGold:S.btnGray,padding:'6px 14px',fontSize:'0.7rem'}}>
               {hiddenSections.includes(s)?'Mostrar':'Ocultar'}
             </button>
           </div>
         ))}
       </div>
-
-      {/* Obras */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
-        <div style={S.label}>Obras</div>
-        <button onClick={()=>setShowObraSettings(!showObraSettings)} style={{...S.btnGray,padding:'4px 10px',fontSize:'0.7rem'}}>
-          {showObraSettings?'Cerrar':'Gestionar'}
-        </button>
-      </div>
-      {showObraSettings&&(
-        <div style={{...S.card,marginBottom:'16px'}}>
-          <p style={{fontSize:'0.75rem',color:'#555',margin:'0 0 12px',lineHeight:1.5}}>Creá obras nuevas y gestioná sus categorías.</p>
-          {Object.keys(obraSettings.obras||{}).map(obraName=>(
-            <div key={obraName} style={{borderBottom:'1px solid #1e1e1e',paddingBottom:'12px',marginBottom:'12px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px'}}>
-                <span style={{fontSize:'0.9rem',color:obraSettings.activeObra===obraName?'#c8a96e':'#ccc',fontWeight:obraSettings.activeObra===obraName?'bold':'normal'}}>{obraName}{obraSettings.activeObra===obraName?' ✓':''}</span>
-                {obraSettings.activeObra!==obraName&&(
-                  <button onClick={()=>setActiveObra(obraName)} style={{...S.btnGray,padding:'4px 10px',fontSize:'0.7rem'}}>Activar</button>
-                )}
-              </div>
-              <button onClick={()=>setEditingObraCats(editingObraCats===obraName?null:obraName)} style={{...S.btnGray,fontSize:'0.68rem',padding:'4px 8px',marginBottom:'6px'}}>
-                {editingObraCats===obraName?'▲ Cerrar categorías':'▼ Ver/editar categorías'}
-              </button>
-              {editingObraCats===obraName&&(
-                <div style={{paddingLeft:'8px'}}>
-                  {(obraSettings.obras[obraName]||[]).map((c,i)=>(
-                    <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid #1a1a1a',fontSize:'0.82rem'}}>
-                      <span style={{color:'#aaa'}}>{c}</span>
-                      <button onClick={()=>removeObraCat(obraName,i)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>✕</button>
-                    </div>
-                  ))}
-                  <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
-                    <input placeholder="Nueva categoría..." value={newObraCat} onChange={e=>setNewObraCat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addObraCat(obraName)} style={{...S.input,flex:1,fontSize:'0.82rem',padding:'6px 10px'}}/>
-                    <button onClick={()=>addObraCat(obraName)} style={{...S.btnGray,padding:'6px 10px'}}>+</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-          <div style={{display:'flex',gap:'8px',marginTop:'8px'}}>
-            <input placeholder="Nombre nueva obra..." value={newObraName} onChange={e=>setNewObraName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addObra()} style={{...S.input,flex:1}}/>
-            <button onClick={addObra} style={S.btnGold}>+ Obra</button>
-          </div>
-        </div>
-      )}
 
       {/* Categorías de gastos */}
       <div style={{...S.label,marginBottom:'12px'}}>Categorías de gastos</div>
