@@ -97,13 +97,15 @@ Tipos posibles:
      "$150.000 le pasé a mami" → entity_name="Mami", amount=-150000, currency="ARS"
      "+ usd 1000 alquiler chinos dani" → entity_name="Dani", amount=1000, currency="USD", description="alquiler chinos"
 
-5. GASTO DE PROYECTO EN PESOS: { "type": "project_gasto", "project_name": string, "amount": número, "description": string, "category": string }
-   - Cuando el gasto es para un proyecto/obra y está en pesos. Se pedirá cotización para normalizarlo a USD.
-   - También se registra como egreso en pesos en el mes (categoría "Obra").
+5. GASTO DE PROYECTO: { "type": "project_gasto", "project_name": string, "amount": número, "currency": "ARS"|"USD", "description": string, "category": string }
+   - Si el monto está en pesos (currency="ARS", el caso normal): se pedirá cotización para normalizarlo a USD, y también se registra como egreso en pesos en el mes (categoría "Obra").
+   - Si el texto dice explícitamente "usd" o "dólares" para el gasto del proyecto (currency="USD"): NO se pide cotización, el monto ya está en dólares directo, y sale de la caja de dólares en vez de la caja de pesos.
    - Si el texto dice "obra" genérico y hay un solo proyecto activo (${singleActiveProject || 'no hay uno solo, hay que preguntar'}), usá ese nombre. Si hay más de uno, dejá project_name="" para que la app pregunte cuál.
    - category debe ser una de las categorías del proyecto correspondiente. Categorías conocidas de proyectos: ${allProjectCats.length ? allProjectCats.join(', ') : 'Materiales, Mano de obra, Dirección de obra, Mobiliario/equipamiento, Otro'}
    - Si no se especifica categoría, dejá category="" para que la app la pregunte.
-   - Ejemplos: "$150.000 obra flete" → project_name="${singleActiveProject||''}", description="flete", category="Materiales"
+   - Ejemplos:
+     "$150.000 obra flete" → project_name="${singleActiveProject||''}", description="flete", category="Materiales", currency="ARS"
+     "obra 500 usd plomero" → project_name="${singleActiveProject||''}", description="plomero", amount=500, currency="USD"
 
 Reglas generales:
 - Lo primero es chequear si el texto menciona el nombre de una entidad o de un proyecto existente — esos casos van por type=entity_movement o type=project_gasto, NO como gasto/ingreso genérico.
