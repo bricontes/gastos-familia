@@ -7,6 +7,23 @@ function lsSet(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
 }
 
+const LS_KEY_BY_TABLE = {
+  transactions: 'transactions',
+  ingresos: 'ingresos',
+  usd_movements: 'usd_movements',
+  entity_movements: 'entity_movements',
+  project_movements: 'project_movements',
+}
+
+// Borra una fila de cualquiera de las tablas de movimientos por su nombre.
+// La usa deleteLinked() en App.jsx para borrar también la operación vinculada.
+export async function deleteRow(table, id) {
+  const key = LS_KEY_BY_TABLE[table]
+  if (key) lsSet(key, (lsGet(key) || []).filter(r => r.id !== id))
+  if (!isOnline()) return
+  await supabase.from(table).delete().eq('id', id)
+}
+
 const isOnline = () => !!supabase
 
 // ── CATEGORIES ────────────────────────────────────────────────────────
@@ -280,6 +297,19 @@ export async function setProjectStatus(id, status) {
   return saveProject({ id, status })
 }
 
+// Borra un proyecto Y todos sus movimientos (cascade en la base).
+// Se usa con un cartel de confirmación del lado de la interfaz.
+export async function deleteProject(id) {
+  if (!isOnline()) {
+    lsSet('projects', (lsGet('projects')||[]).filter(p=>p.id!==id))
+    lsSet('project_movements', (lsGet('project_movements')||[]).filter(m=>m.project_id!==id))
+    return
+  }
+  await supabase.from('projects').delete().eq('id', id)
+  lsSet('projects', (lsGet('projects')||[]).filter(p=>p.id!==id))
+  lsSet('project_movements', (lsGet('project_movements')||[]).filter(m=>m.project_id!==id))
+}
+
 export async function getProjectMovements() {
   if (!isOnline()) return lsGet('project_movements') || []
   const { data, error } = await supabase
@@ -313,4 +343,21 @@ export async function deleteProjectMovement(id) {
   lsSet('project_movements', current.filter(m => m.id !== id))
   if (!isOnline()) return
   await supabase.from('project_movements').delete().eq('id', id)
+}
+
+// ── BORRADO VINCULADO ───────────────────────────────────────────────
+// Varias operaciones (entidad ↔ caja, cambio USD ↔ pesos, obra en USD
+// ↔ caja USD) se crean en pareja y comparten un "link_id". Esta función
+// borra TODAS las filas con ese link_id, en cualquiera de las 5 tablas,
+// para que nunca quede una mitad de la operación huérfana.
+const LINKED_TABLES = ['transactions','ingresos','usd_movements','entity_movements','project_movements']
+
+export async function deleteLinked(linkId) {
+  if (!linkId) return
+  if (!isOnline()) {
+    LINKED_TABLES.forEach(key => lsSet(key, (lsGet(key) || []).filter(r => r.link_id !== linkId)))
+    return
+  }
+  await Promise.all(LINKED_TABLES.map(table => supabase.from(table).delete().eq('link_id', linkId)))
+  LINKED_TABLES.forEach(key => lsSet(key, (lsGet(key) || []).filter(r => r.link_id !== linkId)))
 }
