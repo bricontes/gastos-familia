@@ -25,6 +25,8 @@ create table if not exists transactions (
   amount      numeric not null,
   category    text not null,
   description text,
+  linked_table text,
+  linked_id    uuid,
   created_at  timestamptz default now()
 );
 
@@ -34,6 +36,8 @@ create table if not exists ingresos (
   date        date not null,
   amount      numeric not null,
   description text,
+  linked_table text,
+  linked_id    uuid,
   created_at  timestamptz default now()
 );
 
@@ -46,6 +50,8 @@ create table if not exists usd_movements (
   description   text,
   exchange_rate numeric,
   peso_amount   numeric,
+  linked_table  text,
+  linked_id     uuid,
   created_at    timestamptz default now()
 );
 
@@ -77,6 +83,8 @@ create table if not exists entity_movements (
   amount      numeric not null,
   currency    text not null check (currency in ('ARS','USD')),
   description text,
+  linked_table text,
+  linked_id    uuid,
   created_at  timestamptz default now()
 );
 
@@ -107,6 +115,8 @@ create table if not exists project_movements (
   amount        numeric not null,
   currency      text not null check (currency in ('ARS','USD')),
   exchange_rate numeric,
+  linked_table  text,
+  linked_id     uuid,
   created_at    timestamptz default now()
 );
 
