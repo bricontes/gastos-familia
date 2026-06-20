@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { parseChat, parsePDF, hasGeminiKey } from './gemini.js'
-import { exportToExcel } from './export.js'
+import { exportToExcel, exportToPDF } from './export.js'
 import * as db from './db.js'
 import { entityBalance } from './db.js'
 
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-const DEFAULT_CATEGORIES = ["Comida","Delivery","Salidas","Auto y transporte","Servicios e impuestos","Salud y belleza","Casa y art. del hogar","Ropa","Educación","Mascotas","Deporte","Regalos","Ahorro e inversión","Asesorías","Mamá","Obra","Otros","Azul","Ajuste de cierre"]
+const DEFAULT_CATEGORIES = ["Comida","Delivery","Salidas","Auto y transporte","Servicios e impuestos","Salud y belleza","Casa y art. del hogar","Ropa","Educación","Mascotas","Deporte","Regalos","Ahorro e inversión","Asesorías","Mamá","Obra","Préstamos/Entidades","Cambio USD","Otros","Azul","Ajuste de cierre"]
 const DEFAULT_PROJECT_CATS = ['Dirección de obra','Materiales','Mano de obra','Mobiliario/equipamiento','Otro']
 const ALL_SECTIONS = ["entities","projects"]
 const fmt = n => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0)
@@ -23,6 +23,26 @@ function matchByName(list, text) {
   if (!text) return null
   const t = text.toLowerCase().trim()
   return list.find(x => x.name.toLowerCase() === t) || list.find(x => x.name.toLowerCase().includes(t) || t.includes(x.name.toLowerCase())) || null
+}
+
+const SETTER_BY_TABLE = {
+  transactions: 'setTransactions',
+  ingresos: 'setIngresos',
+  usd_movements: 'setUSDMov',
+  entity_movements: 'setEntityMov',
+  project_movements: 'setProjectMov',
+}
+
+// Borra una fila y, si tiene una operación vinculada (linked_table/linked_id),
+// borra también esa contraparte — así nunca queda una mitad de la jugada sola.
+// "setters" tiene que traer las 5 funciones de set de abajo (vienen todas en "p").
+async function deleteLinked(table, row, setters) {
+  await db.deleteRow(table, row.id)
+  setters[SETTER_BY_TABLE[table]](p => p.filter(x => x.id !== row.id))
+  if (row.linked_table && row.linked_id && SETTER_BY_TABLE[row.linked_table]) {
+    await db.deleteRow(row.linked_table, row.linked_id)
+    setters[SETTER_BY_TABLE[row.linked_table]](p => p.filter(x => x.id !== row.linked_id))
+  }
 }
 
 export default function App() {
@@ -230,7 +250,7 @@ function HomeView({transactions,ingresos,usdMovements,activeEntities,entityMovem
 // ── CHAT ─────────────────────────────────────────────────────────────
 function ChatView({categories,activeEntities,activeProjects,setTransactions,setIngresos,setUSDMov,setEntities,setEntityMov,setProjects,setProjectMov}){
   const [input,setInput]=useState('')
-  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $10.000 salud corte bri  ← categoría + detalle\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• marina + usd 1000  ← cobraste, resta deuda de Marina\n• le presté 50.000 a dani  ← sale de tu bolsillo\n• $150.000 obra flete  ← gasto de proyecto en pesos, pide cotización\n• ajuste -$3.500  ← ajuste de cierre de caja\n\nPodés pegar varias líneas o subir un PDF con 📄'}])
+  const [messages,setMessages]=useState([{role:'assistant',text:'Hola! Escribí los gastos como en el WhatsApp:\n\n• $14.000 pizza\n• $10.000 salud corte bri  ← categoría + detalle\n• Cambio a 1410 -usd 400 +$564.000\n• + $2.272.400 cancelación sueldo\n• marina + usd 1000  ← cobraste, resta deuda de Marina y suma a tu caja USD\n• le presté 50.000 a dani  ← sale de tu bolsillo\n• $150.000 obra flete  ← gasto de proyecto en pesos, pide cotización\n• obra 500 usd plomero  ← gasto de proyecto en dólares directo, sin cotización\n• ajuste -$3.500  ← ajuste de cierre de caja\n\nPodés pegar varias líneas o subir un PDF con 📄'}])
   const [loading,setLoading]=useState(false)
   const [pending,setPending]=useState([])
   // waitingFor: null | 'confirm' | 'entity_type' | 'project_choice' | 'project_category' | 'project_cotiz'
@@ -261,7 +281,14 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
         ings.push({date:dateStr,amount:t.amount||0,description:t.description||''})
       }
       else if(t.type==='usd'){
-        usds.push({date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate||null,peso_amount:t.peso_amount||null})
+        const usdId=crypto.randomUUID()
+        let pesoLink=null, pesoTable=null
+        if(t.peso_amount){
+          pesoLink=crypto.randomUUID()
+          if(t.peso_amount>0){ ings.push({id:pesoLink,date:dateStr,amount:t.peso_amount,description:'Cambio USD',linked_table:'usd_movements',linked_id:usdId}); pesoTable='ingresos' }
+          else { gastos.push({id:pesoLink,date:dateStr,amount:Math.abs(t.peso_amount),category:'Cambio USD',description:t.description||'Cambio USD',linked_table:'usd_movements',linked_id:usdId}); pesoTable='transactions' }
+        }
+        usds.push({id:usdId,date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate||null,peso_amount:t.peso_amount||null,linked_table:pesoTable,linked_id:pesoLink})
       }
       else if(t.type==='entity_movement'){
         let entity=matchByName(activeEntities,t.entity_name)
@@ -270,15 +297,39 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
           setEntities(p=>[...p,entity])
         }
         if(!entity) continue // por seguridad, si no se pudo resolver no se guarda huérfano
-        entMovs.push({entity_id:entity.id,date:dateStr,amount:t.amount||0,currency:t.currency||'ARS',description:t.description||''})
+        const amt=t.amount||0
+        const label=`${entity.name}${t.description?': '+t.description:''}`
+        const entId=crypto.randomUUID(), cashId=crypto.randomUUID()
+        // El flujo de caja real de la entidad también tiene que reflejarse en tu caja:
+        // USD -> caja de dólares; ARS -> ingreso (cobraste) o gasto (prestaste) en la caja de pesos.
+        // Quedan vinculados (linked_table/linked_id) para poder borrarse juntos.
+        let cashTable=null
+        if((t.currency||'ARS')==='USD'){
+          usds.push({id:cashId,date:dateStr,usd100:amt,usd_cambio:0,description:label,exchange_rate:null,peso_amount:null,linked_table:'entity_movements',linked_id:entId})
+          cashTable='usd_movements'
+        } else if(amt>0){
+          ings.push({id:cashId,date:dateStr,amount:amt,description:label,linked_table:'entity_movements',linked_id:entId})
+          cashTable='ingresos'
+        } else if(amt<0){
+          gastos.push({id:cashId,date:dateStr,amount:Math.abs(amt),category:'Préstamos/Entidades',description:label,linked_table:'entity_movements',linked_id:entId})
+          cashTable='transactions'
+        }
+        entMovs.push({id:entId,entity_id:entity.id,date:dateStr,amount:amt,currency:t.currency||'ARS',description:t.description||'',linked_table:cashTable,linked_id:cashTable?cashId:null})
       }
       else if(t.type==='project_gasto'){
         const project=matchByName(activeProjects,t.project_name)
         if(!project) continue
         const monto=t.amount||0
-        const rate=t.exchange_rate||1
-        gastos.push({date:dateStr,amount:monto,category:'Obra',description:t.description||''})
-        projMovs.push({project_id:project.id,date:dateStr,category:t.category||'Otro',description:t.description||'',amount:parseFloat((monto/rate).toFixed(2)),currency:'USD',exchange_rate:rate})
+        if((t.currency||'ARS')==='USD'){
+          // Pago directo en dólares: no pasa por la caja de pesos, sale de la caja USD.
+          const projId=crypto.randomUUID(), cashId=crypto.randomUUID()
+          projMovs.push({id:projId,project_id:project.id,date:dateStr,category:t.category||'Otro',description:t.description||'',amount:monto,currency:'USD',exchange_rate:null,linked_table:'usd_movements',linked_id:cashId})
+          usds.push({id:cashId,date:dateStr,usd100:-Math.abs(monto),usd_cambio:0,description:`${project.name}: ${t.description||'gasto'}`,exchange_rate:null,peso_amount:null,linked_table:'project_movements',linked_id:projId})
+        } else {
+          const rate=t.exchange_rate||1
+          gastos.push({date:dateStr,amount:monto,category:'Obra',description:t.description||''})
+          projMovs.push({project_id:project.id,date:dateStr,category:t.category||'Otro',description:t.description||'',amount:parseFloat((monto/rate).toFixed(2)),currency:'USD',exchange_rate:rate})
+        }
       }
     }
     if(gastos.length){const saved=await db.insertTransactions(gastos);setTransactions(p=>[...p,...(saved||gastos)])}
@@ -296,7 +347,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     if(t.type==='usd')return `💱 Cambio: ${t.usd_amount>0?'+':''}${t.usd_amount} USD @ $${t.exchange_rate} → ${fmt(t.peso_amount)}`
     if(t.type==='ingreso')return `💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
     if(t.type==='entity_movement')return `${t.amount>=0?'💵':'➖'} ${t.entity_name}: ${t.amount>=0?'+':''}${t.amount} ${t.currency}${t.description?' — '+t.description:''}`
-    if(t.type==='project_gasto')return `⚒ ${t.project_name||'Proyecto'} (pesos→USD): ${fmt(t.amount)} — ${t.description}${t.category?' ['+t.category+']':''}`
+    if(t.type==='project_gasto')return `⚒ ${t.project_name||'Proyecto'}${t.currency==='USD'?' (USD directo)':' (pesos→USD)'}: ${t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)} — ${t.description}${t.category?' ['+t.category+']':''}`
     return `📌 ${t.category}: ${fmt(t.amount)}${t.description?' — '+t.description:''}`
   }).join('\n')
 
@@ -335,8 +386,14 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     const project=matchByName(activeProjects,item.project_name)
     const cats=project?.categories||DEFAULT_PROJECT_CATS
     if(!item.category){
-      addMsg('assistant',`Gasto de "${project?.name||item.project_name}" (${fmt(item.amount)})\n¿A qué categoría pertenece?\n${cats.join(', ')}`)
+      addMsg('assistant',`Gasto de "${project?.name||item.project_name}" (${item.currency==='USD'?fmtUsd(item.amount):fmt(item.amount)})\n¿A qué categoría pertenece?\n${cats.join(', ')}`)
       setWaitingFor('project_category')
+      return
+    }
+    if((item.currency||'ARS')==='USD'){
+      // Pago directo en dólares: no hace falta cotización, ya está resuelto.
+      projectQueueIdxRef.current+=1
+      askNextInQueue()
       return
     }
     addMsg('assistant',`${project?.name||item.project_name} → ${item.category} (${fmt(item.amount)})\n¿A qué cotización dólar lo registro?`)
@@ -501,7 +558,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
 }
 
 // ── MONTHLY ───────────────────────────────────────────────────────────
-function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovements,categories,selectedMonth,setSelectedMonth}){
+function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovements,setUSDMov,setEntityMov,setProjectMov,categories,selectedMonth,setSelectedMonth}){
   const {month,year}=selectedMonth
   const [tab,setTab]=useState('resumen')
   const [showAddIng,setShowAddIng]=useState(false)
@@ -512,8 +569,8 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
   const bal=totalI-totalG
   const byCat=categories.reduce((acc,cat)=>{acc[cat]=mTxs.filter(t=>t.category===cat).reduce((s,t)=>s+(t.amount||0),0);return acc},{})
-  const delTx=async t=>{await db.deleteTransaction(t.id);setTransactions(p=>p.filter(x=>x.id!==t.id))}
-  const delIng=async i=>{await db.deleteIngreso(i.id);setIngresos(p=>p.filter(x=>x.id!==i.id))}
+  const delTx=async t=>deleteLinked('transactions',t,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+  const delIng=async i=>deleteLinked('ingresos',i,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   const addIng=async()=>{
     if(!newIng.description||!newIng.amount)return
     const d=new Date(year,month,new Date().getDate())
@@ -524,6 +581,7 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const prev=()=>{const d=new Date(year,month-1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const next=()=>{const d=new Date(year,month+1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const handleExport=()=>exportToExcel({transactions,ingresos,usdMovements,categories,month,year})
+  const handleExportPDF=()=>exportToPDF({transactions,ingresos,categories,month,year})
   return (
     <div style={{padding:'20px'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
@@ -531,7 +589,10 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
         <h2 style={{flex:1,textAlign:'center',fontWeight:'normal',fontSize:'1.05rem',margin:0}}>{MONTHS[month]} {year}</h2>
         <button onClick={next} style={S.navBtn}>›</button>
       </div>
-      <button onClick={handleExport} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>⬇ Exportar Excel — {MONTHS[month]} {year}</button>
+      <div style={{display:'flex',gap:'8px',marginBottom:'14px'}}>
+        <button onClick={handleExport} style={{...S.btnGray,flex:1}}>⬇ Excel</button>
+        <button onClick={handleExportPDF} style={{...S.btnGray,flex:1}}>⬇ PDF</button>
+      </div>
       <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
         {['resumen','gastos','ingresos'].map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:'8px 4px',background:tab===t?'#c8a96e':'#1a1a1a',color:tab===t?'#0f0f0f':'#666',border:'1px solid #222',borderRadius:'6px',cursor:'pointer',fontSize:'0.67rem',letterSpacing:'0.08em',textTransform:'uppercase'}}>
@@ -601,7 +662,7 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
 }
 
 // ── USD ───────────────────────────────────────────────────────────────
-function USDView({usdMovements,setUSDMov}){
+function USDView({usdMovements,setUSDMov,setTransactions,setIngresos,setEntityMov,setProjectMov}){
   const [form,setForm]=useState({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''})
   const [show,setShow]=useState(false)
   const usd100Tot=usdMovements.reduce((s,m)=>s+(m.usd100||0),0)
@@ -610,7 +671,7 @@ function USDView({usdMovements,setUSDMov}){
     const mv={date:form.date||new Date().toISOString().split('T')[0],usd100:parseFloat(form.usd100)||0,usd_cambio:parseFloat(form.usd_cambio)||0,description:form.description,exchange_rate:parseFloat(form.exchange_rate)||null}
     const saved=await db.insertUSD(mv);setUSDMov(p=>[...p,saved||mv]);setForm({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''});setShow(false)
   }
-  const del=async m=>{await db.deleteUSD(m.id);setUSDMov(p=>p.filter(x=>x.id!==m.id))}
+  const del=async m=>deleteLinked('usd_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Caja USD</h2>
@@ -654,7 +715,7 @@ function USDView({usdMovements,setUSDMov}){
 }
 
 // ── DEUDORES / ACREEDORES ───────────────────────────────────────────────
-function EntitiesView({entities,setEntities,entityMovements,setEntityMov}){
+function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDMov,setIngresos,setTransactions,setProjectMov}){
   const [selectedId,setSelectedId]=useState(null)
   const [showNew,setShowNew]=useState(false)
   const [newEnt,setNewEnt]=useState({name:'',type:'deudor'})
@@ -673,12 +734,29 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov}){
   const addMovement=async()=>{
     if(!selected||!form.amount)return
     const signedAmount=form.direction==='recibo'?Math.abs(parseFloat(form.amount)):-Math.abs(parseFloat(form.amount))
-    const mv={entity_id:selected.id,date:form.date||new Date().toISOString().split('T')[0],amount:signedAmount,currency:form.currency,description:form.description}
+    const dateStr=form.date||new Date().toISOString().split('T')[0]
+    const entId=crypto.randomUUID(), cashId=crypto.randomUUID()
+    // El mismo flujo de caja real que en el chat: esto tiene que aparecer
+    // en la caja de USD o en ingresos/gastos de pesos, no solo en la deuda.
+    // Quedan vinculados (linked_table/linked_id) para poder borrarse juntos.
+    const label=`${selected.name}${form.description?': '+form.description:''}`
+    let cashTable=null
+    if(form.currency==='USD'){
+      const u={id:cashId,date:dateStr,usd100:signedAmount,usd_cambio:0,description:label,linked_table:'entity_movements',linked_id:entId}
+      const su=await db.insertUSD(u);setUSDMov(p=>[...p,su||u]);cashTable='usd_movements'
+    } else if(signedAmount>0){
+      const i={id:cashId,date:dateStr,amount:signedAmount,description:label,linked_table:'entity_movements',linked_id:entId}
+      const si=await db.insertIngreso(i);setIngresos(p=>[...p,si||i]);cashTable='ingresos'
+    } else if(signedAmount<0){
+      const tx={id:cashId,date:dateStr,amount:Math.abs(signedAmount),category:'Préstamos/Entidades',description:label,linked_table:'entity_movements',linked_id:entId}
+      const stx=await db.insertTransactions([tx]);setTransactions(p=>[...p,...(stx||[tx])]);cashTable='transactions'
+    }
+    const mv={id:entId,entity_id:selected.id,date:dateStr,amount:signedAmount,currency:form.currency,description:form.description,linked_table:cashTable,linked_id:cashTable?cashId:null}
     const saved=await db.insertEntityMovement(mv)
     setEntityMov(p=>[...p,saved||mv])
     setForm({date:'',amount:'',currency:'ARS',description:'',direction:'recibo'});setShowForm(false)
   }
-  const delMovement=async m=>{await db.deleteEntityMovement(m.id);setEntityMov(p=>p.filter(x=>x.id!==m.id))}
+  const delMovement=async m=>deleteLinked('entity_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   const toggleStatus=async e=>{const updated=await db.setEntityStatus(e.id,e.status==='cerrado'?'activo':'cerrado');setEntities(p=>p.map(x=>x.id===e.id?{...x,...updated}:x))}
 
   if(!selected){
@@ -773,7 +851,7 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov}){
 }
 
 // ── PROYECTOS ────────────────────────────────────────────────────────
-function ProjectsView({projects,setProjects,projectMovements,setProjectMov}){
+function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUSDMov,setTransactions,setIngresos,setEntityMov}){
   const [selectedId,setSelectedId]=useState(null)
   const [showNew,setShowNew]=useState(false)
   const [newName,setNewName]=useState('')
@@ -790,6 +868,18 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov}){
     setSelectedId(saved.id);setNewName('');setShowNew(false)
   }
   const toggleStatus=async pr=>{const updated=await db.setProjectStatus(pr.id,pr.status==='cerrado'?'activo':'cerrado');setProjects(p=>p.map(x=>x.id===pr.id?{...x,...updated}:x))}
+  const removeProject=async pr=>{
+    if(!window.confirm(`¿Seguro que querés borrar "${pr.name}"?\n\nEsta acción no se puede deshacer y se van a perder todos sus movimientos registrados.`))return
+    // Si algún gasto del proyecto era en USD directo, tiene una contraparte en la
+    // caja de dólares — hay que borrarla también para no dejar un movimiento huérfano.
+    const linkedUsdIds=projectMovements.filter(m=>m.project_id===pr.id&&m.linked_table==='usd_movements').map(m=>m.linked_id)
+    for(const id of linkedUsdIds){ await db.deleteRow('usd_movements',id) }
+    if(linkedUsdIds.length) setUSDMov(p=>p.filter(u=>!linkedUsdIds.includes(u.id)))
+    await db.deleteProject(pr.id)
+    setProjects(p=>p.filter(x=>x.id!==pr.id))
+    setProjectMov(p=>p.filter(m=>m.project_id!==pr.id))
+    setSelectedId(null)
+  }
   const addCategory=async()=>{
     if(!newCat.trim()||!selected)return
     const updated=await db.saveProject({...selected,categories:[...(selected.categories||[]),newCat.trim()]})
@@ -802,7 +892,7 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov}){
     setProjectMov(p=>[...p,saved||mv])
     setForm({date:'',category:'',currency:'USD',amount:'',description:''});setShowForm(false)
   }
-  const delMovement=async m=>{await db.deleteProjectMovement(m.id);setProjectMov(p=>p.filter(x=>x.id!==m.id))}
+  const delMovement=async m=>deleteLinked('project_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
 
   if(!selected){
     return (
@@ -850,6 +940,7 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov}){
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
         <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
         <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
+        <button onClick={()=>removeProject(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem',color:'#c87070',borderColor:'#3a1e1e'}}>Borrar</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
         <MiniCard label="Total USD" value={fmtUsd(totUSD)} color="#c8a96e"/>
