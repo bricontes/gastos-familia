@@ -45,6 +45,49 @@ async function deleteLinked(table, row, setters) {
   }
 }
 
+// Edita una fila. Si está vinculada, solo propaga fecha/descripción a la
+// contraparte (los dos comparten esos nombres de columna en las 5 tablas).
+// El monto/categoría/moneda de un registro vinculado no se propaga acá a
+// propósito — si hace falta corregir el monto de un vínculo, conviene
+// borrarlo (se borran las dos puntas solas) y volver a cargarlo bien.
+async function updateLinked(table, row, fields, setters) {
+  await db.updateRow(table, row.id, fields)
+  setters[SETTER_BY_TABLE[table]](p => p.map(x => x.id === row.id ? { ...x, ...fields } : x))
+  if (row.linked_table && row.linked_id && SETTER_BY_TABLE[row.linked_table]) {
+    const propagated = {}
+    if ('date' in fields) propagated.date = fields.date
+    if ('description' in fields) propagated.description = fields.description
+    if (Object.keys(propagated).length) {
+      await db.updateRow(row.linked_table, row.linked_id, propagated)
+      setters[SETTER_BY_TABLE[row.linked_table]](p => p.map(x => x.id === row.linked_id ? { ...x, ...propagated } : x))
+    }
+  }
+}
+
+// Formulario de edición genérico, reutilizado en las 5 listas de movimientos.
+function EditForm({fields, values, onChange, onSave, onCancel, note}){
+  return (
+    <div style={{...S.card,marginBottom:'8px',border:'1px solid #3a3020'}}>
+      {note&&<div style={{fontSize:'0.68rem',color:'#888',marginBottom:'10px',lineHeight:1.5}}>{note}</div>}
+      {fields.map(f=>(
+        <div key={f.key} style={{marginBottom:'8px'}}>
+          {f.type==='select'?(
+            <select value={values[f.key]??''} onChange={e=>onChange(f.key,e.target.value)} style={{...S.input,background:'#111'}}>
+              {f.options.map(o=><option key={o} value={o}>{o}</option>)}
+            </select>
+          ):(
+            <input type={f.type||'text'} placeholder={f.label} value={values[f.key]??''} onChange={e=>onChange(f.key,e.target.value)} style={S.input}/>
+          )}
+        </div>
+      ))}
+      <div style={{display:'flex',gap:'8px'}}>
+        <button onClick={onSave} style={{...S.btnGold,flex:1}}>Guardar</button>
+        <button onClick={onCancel} style={{...S.btnGray,flex:1}}>Cancelar</button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [ready,setReady]=useState(false)
   const [view,setView]=useState('home')
@@ -198,8 +241,10 @@ function HomeView({transactions,ingresos,usdMovements,activeEntities,entityMovem
   const usdTot=usdMovements.reduce((s,m)=>s+(m.usd100||0)+(m.usd_cambio||0),0)
 
   // Diferencia neta entre lo que te deben y lo que debés, por moneda.
+  // entityNetEffect() ya devuelve el saldo de cada entidad en términos de
+  // "a tu favor / en contra", así que sumar directamente da el neto correcto.
   const netByCurrency = activeEntities.reduce((acc,e)=>{
-    const b = entityBalance(e, entityMovements)
+    const b = db.entityNetEffect(e, entityMovements)
     acc.ARS += b.ARS; acc.USD += b.USD
     return acc
   },{ARS:0,USD:0})
@@ -563,6 +608,8 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const [tab,setTab]=useState('resumen')
   const [showAddIng,setShowAddIng]=useState(false)
   const [newIng,setNewIng]=useState({description:'',amount:''})
+  const [editingId,setEditingId]=useState(null)
+  const [editVals,setEditVals]=useState({})
   const mTxs=transactions.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
   const mIngs=ingresos.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
   const totalG=mTxs.reduce((s,t)=>s+(t.amount||0),0)
@@ -571,6 +618,18 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const byCat=categories.reduce((acc,cat)=>{acc[cat]=mTxs.filter(t=>t.category===cat).reduce((s,t)=>s+(t.amount||0),0);return acc},{})
   const delTx=async t=>deleteLinked('transactions',t,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   const delIng=async i=>deleteLinked('ingresos',i,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+  const startEdit=row=>{setEditingId(row.id);setEditVals({date:row.date,description:row.description||'',category:row.category,amount:row.amount})}
+  const cancelEdit=()=>{setEditingId(null);setEditVals({})}
+  const saveEditTx=async row=>{
+    const fields=row.linked_table?{date:editVals.date,description:editVals.description}:{date:editVals.date,description:editVals.description,category:editVals.category,amount:parseFloat(editVals.amount)||0}
+    await updateLinked('transactions',row,fields,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    cancelEdit()
+  }
+  const saveEditIng=async row=>{
+    const fields=row.linked_table?{date:editVals.date,description:editVals.description}:{date:editVals.date,description:editVals.description,amount:parseFloat(editVals.amount)||0}
+    await updateLinked('ingresos',row,fields,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    cancelEdit()
+  }
   const addIng=async()=>{
     if(!newIng.description||!newIng.amount)return
     const d=new Date(year,month,new Date().getDate())
@@ -621,7 +680,21 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
       </>)}
       {tab==='gastos'&&(<>
         {mTxs.length===0&&<div style={{color:'#444',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Sin gastos registrados</div>}
-        {mTxs.map((t,i)=>(
+        {mTxs.map((t,i)=>editingId===t.id?(
+          <EditForm key={t.id||i}
+            note={t.linked_table?'Este gasto está vinculado a otra caja — por ahora solo se puede corregir la fecha y la descripción. Para cambiar el monto o la categoría, borralo (se borra el vínculo entero) y volvé a cargarlo.':null}
+            fields={t.linked_table?[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+            ]:[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'category',type:'select',options:categories},
+              {key:'amount',type:'number',label:'Monto'},
+              {key:'description',label:'Descripción'},
+            ]}
+            values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
+            onSave={()=>saveEditTx(t)} onCancel={cancelEdit}/>
+        ):(
           <div key={t.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div style={{flex:1,minWidth:0,marginRight:'10px'}}>
               <div style={{fontSize:'0.7rem',color:'#555',marginBottom:'2px'}}>{t.category} · {t.date}</div>
@@ -629,17 +702,32 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
             </div>
             <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
               <span style={{color:'#c87070',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
+              <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
               <button onClick={()=>delTx(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
         ))}
       </>)}
       {tab==='ingresos'&&(<>
-        {mIngs.map((t,i)=>(
+        {mIngs.map((t,i)=>editingId===t.id?(
+          <EditForm key={t.id||i}
+            note={t.linked_table?'Este ingreso está vinculado a otra caja — por ahora solo se puede corregir la fecha y la descripción. Para cambiar el monto, borralo (se borra el vínculo entero) y volvé a cargarlo.':null}
+            fields={t.linked_table?[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+            ]:[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+              {key:'amount',type:'number',label:'Monto'},
+            ]}
+            values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
+            onSave={()=>saveEditIng(t)} onCancel={cancelEdit}/>
+        ):(
           <div key={t.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div><div style={{fontSize:'0.7rem',color:'#555'}}>{t.date}</div><div style={{fontSize:'0.88rem',color:'#ddd'}}>{t.description}</div></div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
               <span style={{color:'#6e9e6e',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
+              <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
               <button onClick={()=>delIng(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
@@ -665,6 +753,8 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
 function USDView({usdMovements,setUSDMov,setTransactions,setIngresos,setEntityMov,setProjectMov}){
   const [form,setForm]=useState({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''})
   const [show,setShow]=useState(false)
+  const [editingId,setEditingId]=useState(null)
+  const [editVals,setEditVals]=useState({})
   const usd100Tot=usdMovements.reduce((s,m)=>s+(m.usd100||0),0)
   const usdCambioTot=usdMovements.reduce((s,m)=>s+(m.usd_cambio||0),0)
   const add=async()=>{
@@ -672,6 +762,13 @@ function USDView({usdMovements,setUSDMov,setTransactions,setIngresos,setEntityMo
     const saved=await db.insertUSD(mv);setUSDMov(p=>[...p,saved||mv]);setForm({date:'',usd100:'',usd_cambio:'',description:'',exchange_rate:''});setShow(false)
   }
   const del=async m=>deleteLinked('usd_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+  const startEdit=m=>{setEditingId(m.id);setEditVals({date:m.date,description:m.description||'',usd100:m.usd100,usd_cambio:m.usd_cambio,exchange_rate:m.exchange_rate})}
+  const cancelEdit=()=>{setEditingId(null);setEditVals({})}
+  const saveEdit=async m=>{
+    const fields=m.linked_table?{date:editVals.date,description:editVals.description}:{date:editVals.date,description:editVals.description,usd100:parseFloat(editVals.usd100)||0,usd_cambio:parseFloat(editVals.usd_cambio)||0,exchange_rate:parseFloat(editVals.exchange_rate)||null}
+    await updateLinked('usd_movements',m,fields,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    cancelEdit()
+  }
   return (
     <div style={{padding:'20px'}}>
       <h2 style={{fontWeight:'normal',fontSize:'1.1rem',marginBottom:'16px'}}>Caja USD</h2>
@@ -697,7 +794,22 @@ function USDView({usdMovements,setUSDMov,setTransactions,setIngresos,setEntityMo
       )}
       {!show&&<button onClick={()=>setShow(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar movimiento</button>}
       <div style={{maxHeight:'52vh',overflowY:'auto'}}>
-        {[...usdMovements].reverse().map((m,i)=>(
+        {[...usdMovements].reverse().map((m,i)=>editingId===m.id?(
+          <EditForm key={m.id||i}
+            note={m.linked_table?'Este movimiento está vinculado a otra caja — por ahora solo se puede corregir la fecha y la descripción. Para cambiar el monto, borralo (se borra el vínculo entero) y volvé a cargarlo.':null}
+            fields={m.linked_table?[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+            ]:[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'usd100',type:'number',label:'USD billetes (±)'},
+              {key:'usd_cambio',type:'number',label:'USD cambio (±)'},
+              {key:'exchange_rate',type:'number',label:'Cotización'},
+              {key:'description',label:'Descripción'},
+            ]}
+            values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
+            onSave={()=>saveEdit(m)} onCancel={cancelEdit}/>
+        ):(
           <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div><div style={{fontSize:'0.7rem',color:'#555'}}>{m.date}{m.exchange_rate?` · $${m.exchange_rate}`:''}</div><div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description}</div></div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -705,6 +817,7 @@ function USDView({usdMovements,setUSDMov,setTransactions,setIngresos,setEntityMo
                 {!!m.usd100&&<div style={{fontSize:'0.8rem',color:m.usd100>0?'#6e9e6e':'#c87070'}}>{m.usd100>0?'+':''}{m.usd100} 💵</div>}
                 {!!m.usd_cambio&&<div style={{fontSize:'0.8rem',color:m.usd_cambio>0?'#6e9e6e':'#c87070'}}>{m.usd_cambio>0?'+':''}{m.usd_cambio} 🔄</div>}
               </div>
+              <button onClick={()=>startEdit(m)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
               <button onClick={()=>del(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
@@ -719,8 +832,12 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDM
   const [selectedId,setSelectedId]=useState(null)
   const [showNew,setShowNew]=useState(false)
   const [newEnt,setNewEnt]=useState({name:'',type:'deudor'})
-  const [form,setForm]=useState({date:'',amount:'',currency:'ARS',description:'',direction:'recibo'})
+  const [form,setForm]=useState({date:'',amount:'',currency:'ARS',description:'',direction:'recibo',link:true})
   const [showForm,setShowForm]=useState(false)
+  const [renaming,setRenaming]=useState(false)
+  const [newName,setNewName]=useState('')
+  const [editingId,setEditingId]=useState(null)
+  const [editVals,setEditVals]=useState({})
 
   const selected=entities.find(e=>e.id===selectedId)
 
@@ -731,32 +848,51 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDM
     setSelectedId(saved.id);setNewEnt({name:'',type:'deudor'});setShowNew(false)
   }
 
+  const renameEntity=async()=>{
+    if(!newName.trim()||!selected)return
+    const updated=await db.saveEntity({id:selected.id,name:newName.trim(),type:selected.type})
+    setEntities(p=>p.map(x=>x.id===selected.id?{...x,...updated}:x))
+    setRenaming(false);setNewName('')
+  }
+
   const addMovement=async()=>{
     if(!selected||!form.amount)return
     const signedAmount=form.direction==='recibo'?Math.abs(parseFloat(form.amount)):-Math.abs(parseFloat(form.amount))
     const dateStr=form.date||new Date().toISOString().split('T')[0]
-    const entId=crypto.randomUUID(), cashId=crypto.randomUUID()
-    // El mismo flujo de caja real que en el chat: esto tiene que aparecer
-    // en la caja de USD o en ingresos/gastos de pesos, no solo en la deuda.
-    // Quedan vinculados (linked_table/linked_id) para poder borrarse juntos.
+    const entId=crypto.randomUUID()
     const label=`${selected.name}${form.description?': '+form.description:''}`
-    let cashTable=null
-    if(form.currency==='USD'){
-      const u={id:cashId,date:dateStr,usd100:signedAmount,usd_cambio:0,description:label,linked_table:'entity_movements',linked_id:entId}
-      const su=await db.insertUSD(u);setUSDMov(p=>[...p,su||u]);cashTable='usd_movements'
-    } else if(signedAmount>0){
-      const i={id:cashId,date:dateStr,amount:signedAmount,description:label,linked_table:'entity_movements',linked_id:entId}
-      const si=await db.insertIngreso(i);setIngresos(p=>[...p,si||i]);cashTable='ingresos'
-    } else if(signedAmount<0){
-      const tx={id:cashId,date:dateStr,amount:Math.abs(signedAmount),category:'Préstamos/Entidades',description:label,linked_table:'entity_movements',linked_id:entId}
-      const stx=await db.insertTransactions([tx]);setTransactions(p=>[...p,...(stx||[tx])]);cashTable='transactions'
+    // Si "link" está desmarcado (ej: conteo inicial de un saldo que ya existía
+    // de antes), NO se toca la caja — solo queda registrada la deuda.
+    let cashTable=null, cashId=null
+    if(form.link){
+      cashId=crypto.randomUUID()
+      // El mismo flujo de caja real que en el chat: esto tiene que aparecer
+      // en la caja de USD o en ingresos/gastos de pesos, no solo en la deuda.
+      // Quedan vinculados (linked_table/linked_id) para poder borrarse juntos.
+      if(form.currency==='USD'){
+        const u={id:cashId,date:dateStr,usd100:signedAmount,usd_cambio:0,description:label,linked_table:'entity_movements',linked_id:entId}
+        const su=await db.insertUSD(u);setUSDMov(p=>[...p,su||u]);cashTable='usd_movements'
+      } else if(signedAmount>0){
+        const i={id:cashId,date:dateStr,amount:signedAmount,description:label,linked_table:'entity_movements',linked_id:entId}
+        const si=await db.insertIngreso(i);setIngresos(p=>[...p,si||i]);cashTable='ingresos'
+      } else if(signedAmount<0){
+        const tx={id:cashId,date:dateStr,amount:Math.abs(signedAmount),category:'Préstamos/Entidades',description:label,linked_table:'entity_movements',linked_id:entId}
+        const stx=await db.insertTransactions([tx]);setTransactions(p=>[...p,...(stx||[tx])]);cashTable='transactions'
+      }
     }
     const mv={id:entId,entity_id:selected.id,date:dateStr,amount:signedAmount,currency:form.currency,description:form.description,linked_table:cashTable,linked_id:cashTable?cashId:null}
     const saved=await db.insertEntityMovement(mv)
     setEntityMov(p=>[...p,saved||mv])
-    setForm({date:'',amount:'',currency:'ARS',description:'',direction:'recibo'});setShowForm(false)
+    setForm({date:'',amount:'',currency:'ARS',description:'',direction:'recibo',link:true});setShowForm(false)
   }
   const delMovement=async m=>deleteLinked('entity_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+  const startEditMov=m=>{setEditingId(m.id);setEditVals({date:m.date,description:m.description||'',amount:m.amount,currency:m.currency})}
+  const cancelEditMov=()=>{setEditingId(null);setEditVals({})}
+  const saveEditMov=async m=>{
+    const fields=m.linked_table?{date:editVals.date,description:editVals.description}:{date:editVals.date,description:editVals.description,amount:parseFloat(editVals.amount)||0,currency:editVals.currency}
+    await updateLinked('entity_movements',m,fields,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    cancelEditMov()
+  }
   const toggleStatus=async e=>{const updated=await db.setEntityStatus(e.id,e.status==='cerrado'?'activo':'cerrado');setEntities(p=>p.map(x=>x.id===e.id?{...x,...updated}:x))}
 
   if(!selected){
@@ -804,10 +940,19 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDM
   return (
     <div style={{padding:'20px'}}>
       <button onClick={()=>setSelectedId(null)} style={{...S.btnGray,marginBottom:'14px',padding:'6px 12px',fontSize:'0.7rem'}}>← Todos</button>
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px'}}>
-        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
-        <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
-      </div>
+      {renaming?(
+        <div style={{display:'flex',gap:'8px',marginBottom:'10px'}}>
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder={selected.name} style={{...S.input,flex:1}}/>
+          <button onClick={renameEntity} style={{...S.btnGold,padding:'10px 14px'}}>✓</button>
+          <button onClick={()=>{setRenaming(false);setNewName('')}} style={{...S.btnGray,padding:'10px 14px'}}>✕</button>
+        </div>
+      ):(
+        <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px'}}>
+          <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
+          <button onClick={()=>{setRenaming(true);setNewName(selected.name)}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px',fontSize:'0.9rem'}}>✎</button>
+          <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
+        </div>
+      )}
       <div style={{fontSize:'0.68rem',color:'#666',marginBottom:'14px',textTransform:'uppercase',letterSpacing:'0.06em'}}>{selected.type==='deudor'?'Te debe':'Le debés'}</div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
         <MiniCard label="Saldo ARS" value={fmt(Math.abs(b.ARS))} color={b.ARS>=0?'#6e9e6e':'#c87070'}/>
@@ -827,6 +972,10 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDM
           </div>
           <input placeholder="Monto" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} style={{...S.input,marginBottom:'8px'}} type="number"/>
           <input placeholder="Descripción (opcional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{...S.input,marginBottom:'8px'}}/>
+          <label style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px',fontSize:'0.78rem',color:'#999',cursor:'pointer'}}>
+            <input type="checkbox" checked={form.link} onChange={e=>setForm({...form,link:e.target.checked})}/>
+            Vincular con la caja {form.currency==='USD'?'de dólares':'de pesos'} (desmarcá esto para conteos iniciales / saldos de plata que ya tenías de antes)
+          </label>
           <div style={{display:'flex',gap:'8px'}}>
             <button onClick={addMovement} style={{...S.btnGold,flex:1}}>Guardar</button>
             <button onClick={()=>setShowForm(false)} style={{...S.btnGray,flex:1}}>Cancelar</button>
@@ -836,11 +985,26 @@ function EntitiesView({entities,setEntities,entityMovements,setEntityMov,setUSDM
         <button onClick={()=>setShowForm(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar movimiento</button>
       )}
       <div style={{maxHeight:'42vh',overflowY:'auto'}}>
-        {[...myMovs].reverse().map((m,i)=>(
+        {[...myMovs].reverse().map((m,i)=>editingId===m.id?(
+          <EditForm key={m.id||i}
+            note={m.linked_table?'Este movimiento está vinculado a tu caja — por ahora solo se puede corregir la fecha y la descripción. Para cambiar el monto, borralo (se borra la deuda y el movimiento de caja juntos) y volvé a cargarlo.':null}
+            fields={m.linked_table?[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+            ]:[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'amount',type:'number',label:'Monto (+ = te debe más / − = le debés más)'},
+              {key:'currency',type:'select',options:['ARS','USD']},
+              {key:'description',label:'Descripción'},
+            ]}
+            values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
+            onSave={()=>saveEditMov(m)} onCancel={cancelEditMov}/>
+        ):(
           <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <div><div style={{fontSize:'0.7rem',color:'#555'}}>{m.date}</div><div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description||'—'}</div></div>
+            <div><div style={{fontSize:'0.7rem',color:'#555'}}>{m.date}{!m.linked_table?' · sin vincular':''}</div><div style={{fontSize:'0.85rem',color:'#ddd',marginTop:'2px'}}>{m.description||'—'}</div></div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
               <span style={{fontSize:'0.88rem',color:m.amount>=0?'#6e9e6e':'#c87070'}}>{m.amount>=0?'+':''}{m.amount.toLocaleString('es-AR')} {m.currency}</span>
+              <button onClick={()=>startEditMov(m)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
               <button onClick={()=>delMovement(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
@@ -858,6 +1022,10 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
   const [form,setForm]=useState({date:'',category:'',currency:'USD',amount:'',description:''})
   const [showForm,setShowForm]=useState(false)
   const [newCat,setNewCat]=useState('')
+  const [renaming,setRenaming]=useState(false)
+  const [renameVal,setRenameVal]=useState('')
+  const [editingId,setEditingId]=useState(null)
+  const [editVals,setEditVals]=useState({})
 
   const selected=projects.find(p=>p.id===selectedId)
 
@@ -866,6 +1034,12 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
     const saved=await db.saveProject({name:newName.trim(),categories:DEFAULT_PROJECT_CATS})
     setProjects(p=>[...p,saved])
     setSelectedId(saved.id);setNewName('');setShowNew(false)
+  }
+  const renameProject=async()=>{
+    if(!renameVal.trim()||!selected)return
+    const updated=await db.saveProject({...selected,name:renameVal.trim()})
+    setProjects(p=>p.map(x=>x.id===selected.id?updated:x))
+    setRenaming(false);setRenameVal('')
   }
   const toggleStatus=async pr=>{const updated=await db.setProjectStatus(pr.id,pr.status==='cerrado'?'activo':'cerrado');setProjects(p=>p.map(x=>x.id===pr.id?{...x,...updated}:x))}
   const removeProject=async pr=>{
@@ -893,6 +1067,13 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
     setForm({date:'',category:'',currency:'USD',amount:'',description:''});setShowForm(false)
   }
   const delMovement=async m=>deleteLinked('project_movements',m,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+  const startEditMov=m=>{setEditingId(m.id);setEditVals({date:m.date,category:m.category,description:m.description||'',amount:m.amount})}
+  const cancelEditMov=()=>{setEditingId(null);setEditVals({})}
+  const saveEditMov=async m=>{
+    const fields=m.linked_table?{date:editVals.date,description:editVals.description}:{date:editVals.date,category:editVals.category,description:editVals.description,amount:parseFloat(editVals.amount)||0}
+    await updateLinked('project_movements',m,fields,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    cancelEditMov()
+  }
 
   if(!selected){
     return (
@@ -937,11 +1118,20 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
   return (
     <div style={{padding:'20px'}}>
       <button onClick={()=>setSelectedId(null)} style={{...S.btnGray,marginBottom:'14px',padding:'6px 12px',fontSize:'0.7rem'}}>← Todos</button>
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
-        <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
-        <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
-        <button onClick={()=>removeProject(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem',color:'#c87070',borderColor:'#3a1e1e'}}>Borrar</button>
-      </div>
+      {renaming?(
+        <div style={{display:'flex',gap:'8px',marginBottom:'10px'}}>
+          <input value={renameVal} onChange={e=>setRenameVal(e.target.value)} placeholder={selected.name} style={{...S.input,flex:1}}/>
+          <button onClick={renameProject} style={{...S.btnGold,padding:'10px 14px'}}>✓</button>
+          <button onClick={()=>{setRenaming(false);setRenameVal('')}} style={{...S.btnGray,padding:'10px 14px'}}>✕</button>
+        </div>
+      ):(
+        <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
+          <h2 style={{fontWeight:'normal',fontSize:'1.1rem',margin:0,flex:1}}>{selected.name}</h2>
+          <button onClick={()=>{setRenaming(true);setRenameVal(selected.name)}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px',fontSize:'0.9rem'}}>✎</button>
+          <button onClick={()=>toggleStatus(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem'}}>{selected.status==='cerrado'?'Reactivar':'Cerrar'}</button>
+          <button onClick={()=>removeProject(selected)} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.66rem',color:'#c87070',borderColor:'#3a1e1e'}}>Borrar</button>
+        </div>
+      )}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
         <MiniCard label="Total USD" value={fmtUsd(totUSD)} color="#c8a96e"/>
         <MiniCard label="Total ARS" value={fmt(totARS)} color="#c8a96e"/>
@@ -982,7 +1172,21 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
         <button onClick={()=>setShowForm(true)} style={{...S.btnGray,width:'100%',marginBottom:'14px'}}>+ Agregar gasto</button>
       )}
       <div style={{maxHeight:'34vh',overflowY:'auto'}}>
-        {[...mine].reverse().map((m,i)=>(
+        {[...mine].reverse().map((m,i)=>editingId===m.id?(
+          <EditForm key={m.id||i}
+            note={m.linked_table?'Este gasto está vinculado a tu caja USD — por ahora solo se puede corregir la fecha y la descripción. Para cambiar el monto, borralo (se borra el vínculo entero) y volvé a cargarlo.':null}
+            fields={m.linked_table?[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'description',label:'Descripción'},
+            ]:[
+              {key:'date',type:'date',label:'Fecha'},
+              {key:'category',type:'select',options:cats},
+              {key:'amount',type:'number',label:'Monto'},
+              {key:'description',label:'Descripción'},
+            ]}
+            values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
+            onSave={()=>saveEditMov(m)} onCancel={cancelEditMov}/>
+        ):(
           <div key={m.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div>
               <div style={{fontSize:'0.7rem',color:'#555'}}>{m.date} · {m.category}</div>
@@ -990,6 +1194,7 @@ function ProjectsView({projects,setProjects,projectMovements,setProjectMov,setUS
             </div>
             <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
               <span style={{fontSize:'0.85rem',color:'#c8a96e'}}>{m.currency==='USD'?fmtUsd(m.amount):fmt(m.amount)}</span>
+              <button onClick={()=>startEditMov(m)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
               <button onClick={()=>delMovement(m)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
             </div>
           </div>
