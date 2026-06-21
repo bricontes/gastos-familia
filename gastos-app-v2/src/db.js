@@ -15,8 +15,17 @@ const LS_KEY_BY_TABLE = {
   project_movements: 'project_movements',
 }
 
-// Borra una fila de cualquiera de las tablas de movimientos por su nombre.
-// La usa deleteLinked() en App.jsx para borrar también la operación vinculada.
+// Actualiza una fila de cualquiera de las tablas de movimientos.
+// La usa updateLinked() en App.jsx para editar y propagar al vínculo si corresponde.
+export async function updateRow(table, id, fields) {
+  const key = LS_KEY_BY_TABLE[table]
+  if (key) lsSet(key, (lsGet(key) || []).map(r => r.id === id ? { ...r, ...fields } : r))
+  if (!isOnline()) return { id, ...fields }
+  const { data, error } = await supabase.from(table).update(fields).eq('id', id).select()
+  if (error) { console.error('updateRow:', error); return null }
+  return data?.[0]
+}
+
 export async function deleteRow(table, id) {
   const key = LS_KEY_BY_TABLE[table]
   if (key) lsSet(key, (lsGet(key) || []).filter(r => r.id !== id))
@@ -343,21 +352,4 @@ export async function deleteProjectMovement(id) {
   lsSet('project_movements', current.filter(m => m.id !== id))
   if (!isOnline()) return
   await supabase.from('project_movements').delete().eq('id', id)
-}
-
-// ── BORRADO VINCULADO ───────────────────────────────────────────────
-// Varias operaciones (entidad ↔ caja, cambio USD ↔ pesos, obra en USD
-// ↔ caja USD) se crean en pareja y comparten un "link_id". Esta función
-// borra TODAS las filas con ese link_id, en cualquiera de las 5 tablas,
-// para que nunca quede una mitad de la operación huérfana.
-const LINKED_TABLES = ['transactions','ingresos','usd_movements','entity_movements','project_movements']
-
-export async function deleteLinked(linkId) {
-  if (!linkId) return
-  if (!isOnline()) {
-    LINKED_TABLES.forEach(key => lsSet(key, (lsGet(key) || []).filter(r => r.link_id !== linkId)))
-    return
-  }
-  await Promise.all(LINKED_TABLES.map(table => supabase.from(table).delete().eq('link_id', linkId)))
-  LINKED_TABLES.forEach(key => lsSet(key, (lsGet(key) || []).filter(r => r.link_id !== linkId)))
 }
