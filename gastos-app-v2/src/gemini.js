@@ -70,6 +70,11 @@ Respondé SOLO con JSON array válido, sin markdown ni texto extra.
 Entidades (deudores/acreedores) que ya existen: ${entityNames}
 Proyectos activos que ya existen: ${projectNames}
 
+IMPORTANTE: Brian (también "Bri") y Anita/Analia (también "Ani") son los DOS USUARIOS de esta app — el matrimonio que la usa, no terceros. NUNCA son una entidad de tipo deudor/acreedor, aunque su nombre aparezca junto a un monto. Si el texto los menciona junto con un ingreso (+):
+  - Monto en pesos → type="ingreso", amount=monto, description incluye el nombre (ej: "honorarios bri +$300.000" → description="Honorarios Bri").
+  - Monto en dólares ("usd"/"dólares") → type="usd", usd_amount=monto, peso_amount=null, description incluye el nombre (ej: "honorarios bri +usd 500" → usd_amount=500, description="Honorarios Bri").
+Si aparecen en un gasto sin "+" (ej: "corte bri", "remedios ani"), es un gasto normal (type="gasto") de la categoría que corresponda, nunca entity_movement.
+
 Tipos posibles:
 
 1. GASTO SIMPLE: { "type": "gasto", "amount": número, "description": string, "category": string }
@@ -87,7 +92,7 @@ Tipos posibles:
    - Ejemplo: "Cambio a 1410 -usd 400 +$564.000" → usd_amount=-400, peso_amount=564000, exchange_rate=1410
 
 4. MOVIMIENTO CON ENTIDAD (deudor o acreedor): { "type": "entity_movement", "entity_name": string, "amount": número, "currency": "ARS"|"USD", "description": string, "is_new": boolean }
-   - Se usa SIEMPRE que el texto mencione el nombre de una persona de la lista de entidades (o un nombre nuevo que parezca una persona en contexto de deuda/préstamo/pago).
+   - Se usa SIEMPRE que el texto mencione el nombre de una persona de la lista de entidades (o un nombre nuevo que parezca una persona en contexto de deuda/préstamo/pago) — EXCEPTO Brian/Bri y Anita/Ani/Analia, que nunca son una entidad (ver nota arriba).
    - "amount" es el FLUJO DE CAJA REAL, no la deuda en sí: positivo = entró plata a tu bolsillo, negativo = salió plata de tu bolsillo. No intentes calcular si la deuda sube o baja, eso lo hace la app.
    - "currency" = "USD" si el texto dice "usd"/"dólares", "ARS" si usa "$"/pesos.
    - "is_new" = true si el nombre NO está en la lista de entidades existentes (para que la app pregunte si hay que crearla y de qué tipo).
