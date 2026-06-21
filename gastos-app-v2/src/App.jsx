@@ -90,7 +90,7 @@ function EditForm({fields, values, onChange, onSave, onCancel, note}){
 
 export default function App() {
   const [ready,setReady]=useState(false)
-  const [view,setView]=useState('home')
+  const [view,setView]=useState('chat')
   const [categories,setCategories]=useState(DEFAULT_CATEGORIES)
   const [hiddenSections,setHiddenSections]=useState([])
   const [transactions,setTransactions]=useState([])
@@ -320,7 +320,16 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     const gastos=[],usds=[],ings=[],entMovs=[],projMovs=[]
     for(const t of parsed){
       if(t.type==='gasto'){
-        gastos.push({date:dateStr,amount:t.amount||0,category:t.category,description:t.description||''})
+        // Los gastos parseados de un PDF (resumen de tarjeta) traen su propia
+        // fecha real — solo usamos "hoy" como default para los del chat, que no la traen.
+        const gDate=t.date||dateStr
+        if(t.currency==='USD'){
+          // Consumo en dólares de la tarjeta (ej: Netflix, Spotify) -> sale de la caja USD,
+          // no se mezcla con gastos en pesos.
+          usds.push({date:gDate,usd100:-Math.abs(t.amount||0),usd_cambio:0,description:t.description||'',exchange_rate:null,peso_amount:null})
+        } else {
+          gastos.push({date:gDate,amount:t.amount||0,category:t.category,description:t.description||''})
+        }
       }
       else if(t.type==='ingreso'){
         ings.push({date:dateStr,amount:t.amount||0,description:t.description||''})
@@ -528,7 +537,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
       setPending(withType)
       setWaitingFor('confirm')
       addMsg('assistant',
-        `Encontré ${parsed.length} consumos:\n\n${parsed.slice(0,8).map((t,i)=>`${i+1}. ${t.description}${t.installment?' ('+t.installment+')':''}: ${fmt(t.amount)} → ${t.category}`).join('\n')}${parsed.length>8?`\n...y ${parsed.length-8} más`:''}\n\nPara cambiar una categoría escribí el número y la nueva categoría, ej: "3 Salidas"\nO escribí "guardar" para confirmar.`,
+        `Encontré ${parsed.length} consumos:\n\n${parsed.slice(0,8).map((t,i)=>`${i+1}. ${t.description}${t.installment?' ('+t.installment+')':''}: ${t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)}${t.currency==='USD'?' (caja USD)':' → '+t.category}`).join('\n')}${parsed.length>8?`\n...y ${parsed.length-8} más`:''}\n\nPara cambiar una categoría escribí el número y la nueva categoría, ej: "3 Salidas"\nO escribí "guardar" para confirmar.`,
         {txs:withType,isPDF:true}
       )
     }catch(err){addMsg('assistant',`Error al leer el PDF: ${err.message}`)}
