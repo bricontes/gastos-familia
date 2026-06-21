@@ -92,7 +92,13 @@ Tipos posibles:
    - Ejemplo: "Cambio a 1410 -usd 400 +$564.000" → usd_amount=-400, peso_amount=564000, exchange_rate=1410
 
 4. MOVIMIENTO CON ENTIDAD (deudor o acreedor): { "type": "entity_movement", "entity_name": string, "amount": número, "currency": "ARS"|"USD", "description": string, "is_new": boolean }
-   - Se usa SIEMPRE que el texto mencione el nombre de una persona de la lista de entidades (o un nombre nuevo que parezca una persona en contexto de deuda/préstamo/pago) — EXCEPTO Brian/Bri y Anita/Ani/Analia, que nunca son una entidad (ver nota arriba).
+   - Se usa SOLO cuando el texto describe una TRANSFERENCIA DIRECTA de plata entre vos y la entidad: verbos como "le presté", "le pasé", "le di", "me pagó", "cobré", "me devolvió", o la sintaxis directa "Nombre +/-monto" — EXCEPTO Brian/Bri y Anita/Ani/Analia, que nunca son una entidad (ver nota arriba).
+   - NO se usa cuando el nombre de la entidad aparece solo como ETIQUETA de a quién beneficia un gasto pagado a un TERCERO (un servicio, una cuenta, un comercio), sin verbo de transferencia directa hacia la persona y sin signo "+/-" pegado al nombre. Eso es un gasto normal (type="gasto") con su categoría — frecuentemente la categoría coincide con el nombre de la entidad si existe esa categoría (ej. "Mamá"), pero la deuda de esa persona NO se toca.
+     Ejemplos de esta distinción:
+     "luz mama $5.000" → type="gasto", category="Mamá", description="luz" (pagaste un servicio en su nombre, no le prestaste ni le diste plata a ella directamente — NO es entity_movement)
+     "cable mama $3.000" → type="gasto", category="Mamá", description="cable"
+     "le presté 5000 a mama" → type="entity_movement" (verbo "le presté" = transferencia directa)
+     "mama -5000" → type="entity_movement" (sintaxis directa nombre+signo)
    - "amount" es el FLUJO DE CAJA REAL, no la deuda en sí: positivo = entró plata a tu bolsillo, negativo = salió plata de tu bolsillo. No intentes calcular si la deuda sube o baja, eso lo hace la app.
    - "currency" = "USD" si el texto dice "usd"/"dólares", "ARS" si usa "$"/pesos.
    - "is_new" = true si el nombre NO está en la lista de entidades existentes (para que la app pregunte si hay que crearla y de qué tipo).
@@ -124,12 +130,26 @@ Categorías para gastos normales: ${categories.join(', ')}`
 }
 
 export async function parsePDF(base64, categories) {
-  const sys = `Extraé TODOS los consumos de este resumen de tarjeta de crédito argentino.
-Respondé SOLO JSON array válido, sin markdown ni texto extra.
-Cada objeto: { "date": "YYYY-MM-DD", "description": string, "amount": number, "category": string, "installment": string|null }
+  const sys = `Extraé TODOS los consumos (compras, débitos automáticos, suscripciones, cuotas) de este resumen de tarjeta de crédito argentino.
+Respondé SOLO con un JSON array válido, sin markdown ni texto extra.
+
+La tabla de movimientos suele tener columnas: Fecha, #Ref (ignorar), Descripción, Dólares, Pesos — y cada fila normalmente tiene el monto en SOLO UNA de esas dos columnas de moneda (la otra queda vacía/en blanco). Por cada fila:
+- Si tiene monto en la columna Pesos → "amount": ese número, "currency": "ARS"
+- Si tiene monto en la columna Dólares y la de Pesos está vacía → "amount": ese número, "currency": "USD"
+
+Cada objeto: { "date": "YYYY-MM-DD", "description": string, "amount": number, "currency": "ARS"|"USD", "category": string, "installment": string|null }
 Categorías: ${categories.join(', ')}
-Ignorá: pagos realizados, saldos anteriores, impuestos, comisiones.
-Para cuotas (ej "2 de 3") poné installment="2/3".`
+
+Si el resumen separa los movimientos por tarjeta (ej. "Tarjeta 2330 ... Subtotal" y más abajo otra vez "Tarjeta 3075 ... Subtotal", cada una con su propia tabla), extraé los consumos de TODAS las tarjetas listadas, no solo de la primera.
+
+IGNORÁ (no son consumos del titular):
+- Pagos realizados (sección "Pagos", "Pago en dólares", débito del resumen anterior)
+- Comisiones, Intereses, Impuestos (son cargos del banco, no compras)
+- Saldo anterior, balance total, límites de crédito
+- "Cuotas a vencer" (es el cronograma de cuotas futuras ya facturadas más adelante, NO son consumos nuevos — las cuotas reales ya aparecen como filas individuales en la tabla de Movimientos)
+
+Para cuotas (ej "Cuota 2 de 3") poné installment="2/3".
+Si después de revisar la tabla de Movimientos de verdad no hay ninguna fila, recién ahí respondé []. No respondas [] solo porque el formato de columnas te resulte confuso — en ese caso, hacé la mejor inferencia posible de monto y moneda en vez de omitir la fila.`
   const raw = await callGeminiWithPDF(base64, 'application/pdf', 'Extraé todos los consumos de este resumen de tarjeta.', sys)
   return parseJSON(raw)
 }
