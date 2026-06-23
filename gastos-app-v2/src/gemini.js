@@ -130,26 +130,29 @@ Categorías para gastos normales: ${categories.join(', ')}`
 }
 
 export async function parsePDF(base64, categories) {
-  const sys = `Extraé TODOS los consumos (compras, débitos automáticos, suscripciones, cuotas) de este resumen de tarjeta de crédito argentino.
+  const sys = `Extraé TODOS los consumos (compras, débitos automáticos, suscripciones, cuotas) de este resumen de tarjeta de crédito argentino. Puede ser de cualquier banco o billetera (Brubank, Mercado Pago, Visa, etc.) y cada uno arma la tabla con su propio diseño — no asumas un layout fijo, adaptate al que tengas adelante.
+
 Respondé SOLO con un JSON array válido, sin markdown ni texto extra.
-
-La tabla de movimientos suele tener columnas: Fecha, #Ref (ignorar), Descripción, Dólares, Pesos — y cada fila normalmente tiene el monto en SOLO UNA de esas dos columnas de moneda (la otra queda vacía/en blanco). Por cada fila:
-- Si tiene monto en la columna Pesos → "amount": ese número, "currency": "ARS"
-- Si tiene monto en la columna Dólares y la de Pesos está vacía → "amount": ese número, "currency": "USD"
-
 Cada objeto: { "date": "YYYY-MM-DD", "description": string, "amount": number, "currency": "ARS"|"USD", "category": string, "installment": string|null }
 Categorías: ${categories.join(', ')}
 
-Si el resumen separa los movimientos por tarjeta (ej. "Tarjeta 2330 ... Subtotal" y más abajo otra vez "Tarjeta 3075 ... Subtotal", cada una con su propia tabla), extraé los consumos de TODAS las tarjetas listadas, no solo de la primera.
+CÓMO ENCONTRAR LA TABLA DE CONSUMOS:
+- Buscá la sección que lista las compras/operaciones reales, sin importar cómo se llame: puede decir "Movimientos", "Consumos", "Detalle de movimientos", etc.
+- Esa sección puede estar dividida en sub-bloques (por tarjeta física/virtual, por número de tarjeta, por titular/adicional, etc.), cada uno con su propio subtotal. Recorré TODOS los sub-bloques de consumos, no solo el primero que encuentres.
+- Cada fila tiene como mínimo una fecha, una descripción/comercio, y un monto. Puede tener columnas extra en el medio (cuota, número de operación/referencia) — ignoralas para el monto, pero si hay una columna de cuota (ej "3 de 12", "2 de 3") usala para el campo installment (formato "2/3").
+- El monto puede estar en una sola columna, o repartido en dos columnas separadas (una de pesos y otra de dólares) sin un orden fijo — fijate cuál de las dos tiene el valor en cada fila:
+  - Si el valor está en la columna de pesos → "amount": ese número, "currency": "ARS"
+  - Si el valor está en la columna de dólares y la de pesos está vacía → "amount": ese número, "currency": "USD"
+- Las fechas a veces vienen sin año (ej: "26/mar", "7/abr"). Inferí el año usando como referencia la fecha de cierre/vencimiento del resumen (normalmente todas las fechas del período son del mismo año; si el ciclo cruza fin de año, los meses oct/nov/dic pueden corresponder al año anterior al del cierre).
 
-IGNORÁ (no son consumos del titular):
-- Pagos realizados (sección "Pagos", "Pago en dólares", débito del resumen anterior)
-- Comisiones, Intereses, Impuestos (son cargos del banco, no compras)
-- Saldo anterior, balance total, límites de crédito
-- "Cuotas a vencer" (es el cronograma de cuotas futuras ya facturadas más adelante, NO son consumos nuevos — las cuotas reales ya aparecen como filas individuales en la tabla de Movimientos)
+IGNORÁ (no son consumos nuevos del titular):
+- Pagos realizados, pagos anticipados, débitos del resumen anterior (cualquier fila que diga "pago", incluso dentro de una sub-tabla de "saldo anterior")
+- Comisiones, intereses, impuestos (son cargos del banco, no compras)
+- Saldo del período/periodo anterior y su composición, balance total, límites de crédito disponible
+- Ajustes y reembolsos (a menos que digan explícitamente que son un cargo nuevo)
+- Cronogramas de "cuotas a vencer" / "próximas cuotas" (son las cuotas YA facturadas en meses futuros, no consumos nuevos — esas cuotas reales ya están como filas individuales en la tabla de consumos del período actual)
 
-Para cuotas (ej "Cuota 2 de 3") poné installment="2/3".
-Si después de revisar la tabla de Movimientos de verdad no hay ninguna fila, recién ahí respondé []. No respondas [] solo porque el formato de columnas te resulte confuso — en ese caso, hacé la mejor inferencia posible de monto y moneda en vez de omitir la fila.`
+Si después de revisar bien la sección de consumos de verdad no hay ninguna fila, recién ahí respondé []. No respondas [] solo porque el formato de columnas o el nombre de las secciones no coincida con un ejemplo que conozcas — en ese caso, identificá la tabla de consumos por su contenido (fechas + comercios + montos) y extraela igual.`
   const raw = await callGeminiWithPDF(base64, 'application/pdf', 'Extraé todos los consumos de este resumen de tarjeta.', sys)
   return parseJSON(raw)
 }
