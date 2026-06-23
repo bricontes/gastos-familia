@@ -619,8 +619,13 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const [newIng,setNewIng]=useState({description:'',amount:''})
   const [editingId,setEditingId]=useState(null)
   const [editVals,setEditVals]=useState({})
-  const mTxs=transactions.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
-  const mIngs=ingresos.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year})
+  const byRecent=(a,b)=>{
+    const d=new Date(b.date)-new Date(a.date)
+    if(d!==0)return d
+    return new Date(b.created_at||0)-new Date(a.created_at||0)
+  }
+  const mTxs=transactions.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year}).sort(byRecent)
+  const mIngs=ingresos.filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===month&&d.getFullYear()===year}).sort(byRecent)
   const totalG=mTxs.reduce((s,t)=>s+(t.amount||0),0)
   const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
   const bal=totalI-totalG
