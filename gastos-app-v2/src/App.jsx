@@ -101,6 +101,7 @@ export default function App() {
   const [projects,setProjects]=useState([])
   const [projectMovements,setProjectMov]=useState([])
   const [selectedMonth,setSelectedMonth]=useState(()=>{ const d=new Date(); return {month:d.getMonth(),year:d.getFullYear()} })
+  const [carryover,setCarryover]=useState(null) // null | false | number
 
   useEffect(()=>{
     ;(async()=>{
@@ -125,6 +126,22 @@ export default function App() {
         setEntityMov(entMovs||[])
         setProjects(projs||[])
         setProjectMov(projMovs||[])
+
+        // ── Carryover: si el mes actual no tiene "Saldo mes anterior",
+        // calcular el balance del mes previo y ofrecer arrastarlo.
+        const now=new Date()
+        const curM=now.getMonth(), curY=now.getFullYear()
+        const alreadyAdded=(ings||[]).some(i=>{
+          const d=new Date(i.date+'T12:00:00')
+          return d.getMonth()===curM&&d.getFullYear()===curY&&i.description==='Saldo mes anterior'
+        })
+        if(!alreadyAdded){
+          const prevM=curM===0?11:curM-1, prevY=curM===0?curY-1:curY
+          const prevTxs=(txs||[]).filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===prevM&&d.getFullYear()===prevY})
+          const prevIngs=(ings||[]).filter(t=>{const d=new Date(t.date+'T12:00:00');return d.getMonth()===prevM&&d.getFullYear()===prevY})
+          const bal=prevIngs.reduce((s,t)=>s+(t.amount||0),0)-prevTxs.reduce((s,t)=>s+(t.amount||0),0)
+          if(bal>0) setCarryover(bal)
+        }
       } catch(e) {
         console.error('Error loading data:', e)
       } finally {
@@ -132,6 +149,16 @@ export default function App() {
       }
     })()
   },[])
+
+  const applyCarryover=async()=>{
+    if(!carryover) return
+    const now=new Date()
+    const dateStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`
+    const ing={date:dateStr,amount:carryover,description:'Saldo mes anterior'}
+    const saved=await db.insertIngreso(ing)
+    setIngresos(p=>[...p,saved||ing])
+    setCarryover(false)
+  }
 
   if (!ready) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#0f0f0f',color:'#444',fontFamily:'Georgia,serif',fontSize:'0.9rem',letterSpacing:'0.1em'}}>Cargando...</div>
   if (!hasGeminiKey()) return <SetupScreen onDone={()=>window.location.reload()} />
@@ -149,6 +176,15 @@ export default function App() {
 
   return (
     <div style={{minHeight:'100vh',background:'#0f0f0f',color:'#e8dcc8',fontFamily:'Georgia,serif',paddingBottom:'72px'}}>
+      {carryover&&carryover!==false&&(
+        <div style={{position:'sticky',top:0,zIndex:200,background:'#1a1f1a',borderBottom:'1px solid #2e4a2e',padding:'10px 16px',display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+          <span style={{flex:1,fontSize:'0.82rem',color:'#9ec89e'}}>
+            📅 El mes anterior cerró con <strong>{new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(carryover)}</strong> a favor. ¿Lo arrastro como saldo inicial de este mes?
+          </span>
+          <button onClick={applyCarryover} style={{background:'#2e5e2e',color:'#9ec89e',border:'1px solid #3a7a3a',padding:'6px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem',fontWeight:'bold',whiteSpace:'nowrap'}}>Sí, agregar</button>
+          <button onClick={()=>setCarryover(false)} style={{background:'none',color:'#555',border:'1px solid #2a2a2a',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem',whiteSpace:'nowrap'}}>Descartar</button>
+        </div>
+      )}
       {view==='home'     && <HomeView      {...p} setView={setView}/>}
       {view==='chat'     && <ChatView      {...p}/>}
       {view==='monthly'  && <MonthlyView   {...p}/>}
@@ -339,7 +375,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
         let pesoLink=null, pesoTable=null
         if(t.peso_amount){
           pesoLink=crypto.randomUUID()
-          if(t.peso_amount>0){ ings.push({id:pesoLink,date:dateStr,amount:t.peso_amount,description:'Cambio USD',linked_table:'usd_movements',linked_id:usdId}); pesoTable='ingresos' }
+          if(t.peso_amount>0){ ings.push({id:pesoLink,date:dateStr,amount:t.peso_amount,description:`Cambio ${Math.abs(t.usd_amount||0)} USD @ $${t.exchange_rate||'—'}`,linked_table:'usd_movements',linked_id:usdId}); pesoTable='ingresos' }
           else { gastos.push({id:pesoLink,date:dateStr,amount:Math.abs(t.peso_amount),category:'Cambio USD',description:t.description||'Cambio USD',linked_table:'usd_movements',linked_id:usdId}); pesoTable='transactions' }
         }
         usds.push({id:usdId,date:dateStr,usd100:t.usd_amount||0,usd_cambio:0,description:t.description||'Cambio',exchange_rate:t.exchange_rate||null,peso_amount:t.peso_amount||null,linked_table:pesoTable,linked_id:pesoLink})
