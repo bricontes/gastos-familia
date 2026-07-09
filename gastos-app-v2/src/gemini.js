@@ -1,4 +1,4 @@
-const GEMINI_MODELS = ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash']
+const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash']
 
 function getKey() { return localStorage.getItem('gemini_api_key') }
 export function hasGeminiKey() { return !!getKey() }
@@ -130,29 +130,43 @@ Categorías para gastos normales: ${categories.join(', ')}`
 }
 
 export async function parsePDF(base64, categories) {
-  const sys = `Extraé TODOS los consumos (compras, débitos automáticos, suscripciones, cuotas) de este resumen de tarjeta de crédito argentino. Puede ser de cualquier banco o billetera (Brubank, Mercado Pago, Visa, etc.) y cada uno arma la tabla con su propio diseño — no asumas un layout fijo, adaptate al que tengas adelante.
+  const sys = `Extraé TODOS los consumos (compras, débitos automáticos, suscripciones, cuotas) de este resumen de tarjeta de crédito argentino. Puede ser de cualquier banco o billetera (BBVA, Brubank, Mercado Pago, HSBC, Santander, etc.) y cada uno usa su propio diseño — no asumas un layout fijo, adaptate al que tengas adelante.
 
 Respondé SOLO con un JSON array válido, sin markdown ni texto extra.
 Cada objeto: { "date": "YYYY-MM-DD", "description": string, "amount": number, "currency": "ARS"|"USD", "category": string, "installment": string|null }
-Categorías: ${categories.join(', ')}
+Categorías: \${categories.join(', ')}
+
+FECHAS — distintos formatos según el banco:
+- "YYYY-MM-DD" (ej: 2026-06-10) → usá directo.
+- "DD/MM" o "D/mes" sin año (ej: "26/mar", "7/abr") → inferí el año por la fecha de cierre del resumen.
+- "DD-Mon-YY" con mes abreviado en español y año 2 dígitos (ej: "08-Abr-26", "05-Jun-26") → convertí a YYYY-MM-DD. Tabla de meses: Ene=01, Feb=02, Mar=03, Abr=04, May=05, Jun=06, Jul=07, Ago=08, Sep/Set=09, Oct=10, Nov=11, Dic=12. Año "26" = 2026.
+Si el ciclo cruza diciembre/enero, los meses oct/nov/dic de la tabla de consumos pueden ser del año anterior al del cierre.
 
 CÓMO ENCONTRAR LA TABLA DE CONSUMOS:
-- Buscá la sección que lista las compras/operaciones reales, sin importar cómo se llame: puede decir "Movimientos", "Consumos", "Detalle de movimientos", etc.
-- Esa sección puede estar dividida en sub-bloques (por tarjeta física/virtual, por número de tarjeta, por titular/adicional, etc.), cada uno con su propio subtotal. Recorré TODOS los sub-bloques de consumos, no solo el primero que encuentres.
-- Cada fila tiene como mínimo una fecha, una descripción/comercio, y un monto. Puede tener columnas extra en el medio (cuota, número de operación/referencia) — ignoralas para el monto, pero si hay una columna de cuota (ej "3 de 12", "2 de 3") usala para el campo installment (formato "2/3").
-- El monto puede estar en una sola columna, o repartido en dos columnas separadas (una de pesos y otra de dólares) sin un orden fijo — fijate cuál de las dos tiene el valor en cada fila:
-  - Si el valor está en la columna de pesos → "amount": ese número, "currency": "ARS"
-  - Si el valor está en la columna de dólares y la de pesos está vacía → "amount": ese número, "currency": "USD"
-- Las fechas a veces vienen sin año (ej: "26/mar", "7/abr"). Inferí el año usando como referencia la fecha de cierre/vencimiento del resumen (normalmente todas las fechas del período son del mismo año; si el ciclo cruza fin de año, los meses oct/nov/dic pueden corresponder al año anterior al del cierre).
+- Buscá la sección que lista las compras reales. Puede llamarse "Movimientos", "Consumos", "Detalle de movimientos", "Consumos Brian Contestabile", "Consumos Analia D Dattoma", "Con tarjeta virtual", "Con tarjeta física", etc.
+- Esa sección puede tener MÚLTIPLES sub-bloques (por número de tarjeta, por titular, por tarjeta física/virtual, etc.). Recorré ABSOLUTAMENTE TODOS sin excepción — no pares en el primero.
+- Columnas auxiliares a IGNORAR para el monto: "NRO. CUPÓN", "CUPÓN", "Operación", "#Ref", cualquier columna con un número de referencia numérico.
+- Separador decimal argentino: coma = decimal, punto = miles. Ej: "1.234,56" = 1234.56
 
-IGNORÁ (no son consumos nuevos del titular):
-- Pagos realizados, pagos anticipados, débitos del resumen anterior (cualquier fila que diga "pago", incluso dentro de una sub-tabla de "saldo anterior")
-- Comisiones, intereses, impuestos (son cargos del banco, no compras)
-- Saldo del período/periodo anterior y su composición, balance total, límites de crédito disponible
-- Ajustes y reembolsos (a menos que digan explícitamente que son un cargo nuevo)
-- Cronogramas de "cuotas a vencer" / "próximas cuotas" (son las cuotas YA facturadas en meses futuros, no consumos nuevos — esas cuotas reales ya están como filas individuales en la tabla de consumos del período actual)
+CUOTAS — campo installment:
+- "C.03/12" o "C.01/06" → installment="3/12" (quitá el "C.")
+- "3 de 12" o "Cuota 2 de 3" → installment="3/12"
+- Sin info de cuota → installment=null
 
-Si después de revisar bien la sección de consumos de verdad no hay ninguna fila, recién ahí respondé []. No respondas [] solo porque el formato de columnas o el nombre de las secciones no coincida con un ejemplo que conozcas — en ese caso, identificá la tabla de consumos por su contenido (fechas + comercios + montos) y extraela igual.`
-  const raw = await callGeminiWithPDF(base64, 'application/pdf', 'Extraé todos los consumos de este resumen de tarjeta.', sys)
+MONEDA:
+- Valor en columna Pesos → currency="ARS"
+- Valor en columna Dólares con Pesos vacío → currency="USD"
+- Montos NEGATIVOS dentro de consumos (ej: -98.999,45) = reintegro/crédito del comercio. Incluílos con amount negativo — el usuario decidirá.
+
+IGNORAR COMPLETAMENTE (no son consumos):
+- Sección "Sus pagos y ajustes realizados" / "Pagos" → son pagos del resumen, no compras.
+- Sección "Impuestos, cargos e intereses" / "Comisiones" → comisión cuenta, sellos, IVA del banco.
+- Saldo anterior, balance, pago mínimo, límites de crédito, tasas.
+- Cronograma "Total de cuotas a vencer" / "Cuotas a vencer" → son cuotas futuras, no consumos nuevos.
+- Legales y avisos.
+
+Si revisaste todas las secciones de consumos y realmente no hay ninguna fila, respondé []. No respondas [] porque el formato te resulte raro — identificá las filas por su contenido (fecha + comercio + monto) y extraelas igual.`
+  const raw = await callGeminiWithPDF(base64, 'application/pdf', 'Extraé todos los consumos de este resumen de tarjeta de crédito.', sys)
   return parseJSON(raw)
 }
+
