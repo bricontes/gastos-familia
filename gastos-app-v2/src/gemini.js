@@ -37,23 +37,56 @@ async function callGeminiWithPDF(base64, mimeType, prompt, systemPrompt) {
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
         { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
-            system_instruction: { parts:[{ text: systemPrompt }] },
-            contents: [{ parts:[{ inline_data:{ mime_type:mimeType, data:base64 } }, { text:prompt }] }],
-            generationConfig: { temperature:0.1, maxOutputTokens:2048 }
+            // Las instrucciones van integradas en el turno del usuario junto con el PDF,
+            // porque algunos modelos no soportan system_instruction con inline_data.
+            contents: [{ parts:[
+              { inline_data:{ mime_type:mimeType, data:base64 } },
+              { text: systemPrompt + '\n\n' + prompt }
+            ]}],
+            generationConfig: {
+              temperature: 0.1,
+              // 2048 era insuficiente para PDFs con muchos items (el BBVA tiene ~45).
+              // Subimos a 8192 para que nunca se corte el JSON a la mitad.
+              maxOutputTokens: 8192
+            }
           })
         }
       )
       const data = await res.json()
-      if (data.error) { lastError = data.error.message; continue }
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-    } catch(e) { lastError = e.message }
+      if (data.error) {
+        lastError = `[${model}] ${data.error.message}`
+        continue
+      }
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      if (!text) {
+        // Puede pasar si el modelo blockeó el contenido (finishReason != STOP)
+        const reason = data.candidates?.[0]?.finishReason || 'sin respuesta'
+        lastError = `[${model}] sin texto — razón: ${reason}`
+        continue
+      }
+      return text
+    } catch(e) { lastError = `[${model}] ${e.message}` }
   }
   throw new Error(lastError || 'Todos los modelos fallaron')
 }
 
 function parseJSON(raw) {
-  try { return JSON.parse(raw.replace(/```json|```/g,'').trim()) }
-  catch { const m = raw.match(/\[[\s\S]*\]/); if (m) return JSON.parse(m[0]); return [] }
+  if (!raw) return []
+  const clean = raw.replace(/```json|```/g,'').trim()
+  try { return JSON.parse(clean) }
+  catch {
+    // Intenta extraer el array aunque venga con texto antes o después
+    const m = clean.match(/\[[\s\S]*\]/)
+    if (m) {
+      try { return JSON.parse(m[0]) }
+      catch { /* sigue */ }
+    }
+    // Si parece que el JSON quedó truncado a la mitad, tiramos error con contexto
+    if (clean.startsWith('[') && !clean.endsWith(']')) {
+      throw new Error('La respuesta del modelo quedó cortada. Probablemente el PDF es demasiado grande. Intentá subir las páginas de consumos solamente, sin las páginas de legales/avisos.')
+    }
+    return []
+  }
 }
 
 // entities: [{ id, name, type }]   (type: 'deudor' | 'acreedor')
