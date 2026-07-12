@@ -336,6 +336,11 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
   const [pending,setPending]=useState([])
   // waitingFor: null | 'confirm' | 'entity_type' | 'project_choice' | 'project_category' | 'project_cotiz'
   const [waitingFor,setWaitingFor]=useState(null)
+  const [pdfItems,setPdfItems]=useState(null)  // null = sin PDF abierto; array = panel de revisión activo
+  const [lastImportIds,setLastImportIds]=useState(()=>{
+    try{return JSON.parse(localStorage.getItem('last_pdf_import')||'[]')}catch{return[]}
+  })
+  const todayStr=new Date().toISOString().split('T')[0]
   const bottomRef=useRef(),fileRef=useRef()
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[messages])
   const addMsg=(role,text,extra={})=>setMessages(p=>[...p,{role,text,...extra}])
@@ -422,8 +427,9 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
         }
       }
     }
-    if(gastos.length){const saved=await db.insertTransactions(gastos);setTransactions(p=>[...p,...(saved||gastos)])}
-    for(const u of usds){const s=await db.insertUSD(u);setUSDMov(p=>[...p,s||u])}
+    let savedTxIds=[],savedUsdIds=[]
+    if(gastos.length){const saved=await db.insertTransactions(gastos);const arr=saved||gastos;savedTxIds=arr.map(t=>t.id).filter(Boolean);setTransactions(p=>[...p,...arr])}
+    for(const u of usds){const s=await db.insertUSD(u);if(s?.id)savedUsdIds.push(s.id);setUSDMov(p=>[...p,s||u])}
     for(const i of ings){const s=await db.insertIngreso(i);setIngresos(p=>[...p,s||i])}
     for(const m of entMovs){const s=await db.insertEntityMovement(m);setEntityMov(p=>[...p,s||m])}
     for(const m of projMovs){const s=await db.insertProjectMovement(m);setProjectMov(p=>[...p,s||m])}
@@ -431,6 +437,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     setPending([]);setWaitingFor(null)
     entityQueueRef.current=[];newEntityTypesRef.current={};projectQueueRef.current=[];projectQueueIdxRef.current=0;pendingRef.current=[]
     addMsg('assistant','✓ Guardado correctamente.')
+    return {txIds:savedTxIds,usdIds:savedUsdIds}
   }
 
   const summarize=(parsed)=>parsed.map(t=>{
@@ -561,88 +568,170 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     await finalizeAndSave()
   }
 
+  // ── PDF: nuevo flujo con panel de revisión completo ─────────────────
   const handlePDF=async(e)=>{
     const file=e.target.files?.[0];if(!file)return
     setLoading(true);addMsg('user',`📄 ${file.name}`)
     try{
       const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)})
       const parsed=await parsePDF(base64,categories)
-      if(!parsed.length){addMsg('assistant','No encontré consumos en el PDF.');setLoading(false);return}
-      const withType=parsed.map(t=>({...t,type:'gasto'}))
-      pendingRef.current=withType
-      setPending(withType)
-      setWaitingFor('confirm')
-      addMsg('assistant',
-        `Encontré ${parsed.length} consumos:\n\n${parsed.slice(0,8).map((t,i)=>`${i+1}. ${t.description}${t.installment?' ('+t.installment+')':''}: ${t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)}${t.currency==='USD'?' (caja USD)':' → '+t.category}`).join('\n')}${parsed.length>8?`\n...y ${parsed.length-8} más`:''}\n\nPara cambiar una categoría escribí el número y la nueva categoría, ej: "3 Salidas"\nO escribí "guardar" para confirmar.`,
-        {txs:withType,isPDF:true}
-      )
+      if(!parsed.length){addMsg('assistant','No encontré consumos en el PDF.');setLoading(false);e.target.value='';return}
+      // Inicializamos los items con fecha = HOY (no la del resumen).
+      // Se guarda la fecha original solo como referencia visual.
+      const items=parsed.map((t,i)=>({
+        ...t,
+        _key:i,
+        _sel:true,                // seleccionado por defecto
+        _date:todayStr,           // FECHA DEL DÍA DE CARGA, no la del resumen
+        _cat:t.category||'Otros', // categoría editable
+        _origDate:t.date||'',     // para referencia visual
+      }))
+      setPdfItems(items)
+      addMsg('assistant',`Encontré ${parsed.length} consumos de ${file.name}. Revisalos en el panel de abajo — la fecha ya quedó asignada a hoy. Cambiá categorías o fechas si necesitás y luego guardá.`)
     }catch(err){addMsg('assistant',`Error al leer el PDF: ${err.message}`)}
     setLoading(false);e.target.value=''
   }
 
-  const handleSendPDF=async()=>{
-    if(!input.trim()||loading)return
-    const text=input.trim().toLowerCase()
-    if(text==='guardar'||text==='si'||text==='sí'||text==='ok'){
-      setInput('')
-      await handleConfirm()
-      return
+  const savePDF=async()=>{
+    if(!pdfItems)return
+    const selected=pdfItems.filter(t=>t._sel)
+    if(!selected.length){addMsg('assistant','No hay items seleccionados.');return}
+    setLoading(true)
+    const pesoItems=selected.filter(t=>t.currency!=='USD'||!t.currency)
+    const usdItems=selected.filter(t=>t.currency==='USD')
+    const toInsert=pesoItems.map(t=>({
+      date:t._date,
+      amount:Math.abs(t.amount||0),
+      category:t._cat||'Otros',
+      description:`${t.description||''}${t.installment?' ('+t.installment+')':''}`.trim(),
+    }))
+    const saved=toInsert.length?await db.insertTransactions(toInsert):[]
+    if(saved?.length) setTransactions(p=>[...p,...saved])
+    for(const t of usdItems){
+      const u=await db.insertUSD({date:t._date,usd100:-Math.abs(t.amount||0),usd_cambio:0,description:t.description||''})
+      setUSDMov(p=>[...p,u])
     }
-    const match=input.trim().match(/^(\d+)\s+(.+)$/)
-    if(match&&pendingRef.current.length){
-      const idx=parseInt(match[1])-1
-      const newCat=match[2]
-      if(idx>=0&&idx<pendingRef.current.length){
-        pendingRef.current[idx]={...pendingRef.current[idx],category:newCat}
-        setInput('')
-        addMsg('user',input.trim())
-        addMsg('assistant',`Categoría ${idx+1} cambiada a "${newCat}".\n\nEscribí otro número para seguir editando o "guardar" para confirmar.`)
-        return
-      }
-    }
-    await handleSend()
+    // Guardar IDs para poder deshacer
+    const ids=(saved||[]).map(t=>t.id).filter(Boolean)
+    localStorage.setItem('last_pdf_import',JSON.stringify(ids))
+    setLastImportIds(ids)
+    setLoading(false);setPdfItems(null)
+    addMsg('assistant',`✓ Se guardaron ${selected.length} consumos con fecha ${todayStr}.${usdItems.length?` (${usdItems.length} en USD → caja USD)`:''}  \nSi necesitás deshacer esta importación, tocá el botón "Deshacer PDF" que aparece en el encabezado.`)
+  }
+
+  const undoLastImport=async()=>{
+    if(!lastImportIds.length)return
+    if(!window.confirm(`¿Borrar los ${lastImportIds.length} registros de la última importación PDF? Esta acción no se puede deshacer.`))return
+    for(const id of lastImportIds) await db.deleteTransaction(id)
+    setTransactions(p=>p.filter(t=>!lastImportIds.includes(t.id)))
+    localStorage.removeItem('last_pdf_import')
+    setLastImportIds([])
+    addMsg('assistant',`✓ Se borraron ${lastImportIds.length} registros de la última importación PDF.`)
   }
 
   const isPDFMode=waitingFor==='confirm'&&messages.some(m=>m.isPDF)
 
   return (
     <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 72px)'}}>
-      <div style={{padding:'14px 20px',borderBottom:'1px solid #1a1a1a'}}><div style={S.label}>Registrar movimientos</div></div>
-      <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:'12px'}}>
-        {messages.map((m,i)=>(
-          <div key={i} style={{display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{maxWidth:'88%',padding:'10px 14px',borderRadius:'12px',fontSize:'0.88rem',lineHeight:1.55,whiteSpace:'pre-wrap',
-              background:m.role==='user'?'#1e1a10':'#1a1a1a',
-              border:m.role==='user'?'1px solid #3a3020':'1px solid #222',
-              color:m.role==='user'?'#c8a96e':'#e8dcc8'}}>{m.text}</div>
-            {m.txs&&m.role==='assistant'&&(
-              <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>{m.isPDF?'✓ Guardar todos':'✓ Confirmar y guardar'}</button>
-            )}
+      <div style={{padding:'10px 20px',borderBottom:'1px solid #1a1a1a',display:'flex',alignItems:'center',gap:'8px'}}>
+        <div style={{...S.label,flex:1}}>Registrar movimientos</div>
+        {lastImportIds.length>0&&(
+          <button onClick={undoLastImport} style={{...S.btnGray,padding:'5px 10px',fontSize:'0.68rem',color:'#c87070',borderColor:'#3a1e1e'}}>
+            ↩ Deshacer PDF ({lastImportIds.length})
+          </button>
+        )}
+      </div>
+
+      {/* PANEL DE REVISIÓN PDF */}
+      {pdfItems&&(
+        <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+          {/* Controles globales */}
+          <div style={{padding:'10px 14px',borderBottom:'1px solid #1a1a1a',display:'flex',flexWrap:'wrap',gap:'8px',alignItems:'center',background:'#141414'}}>
+            <label style={{fontSize:'0.72rem',color:'#888'}}>
+              <input type="checkbox" checked={pdfItems.every(t=>t._sel)}
+                onChange={e=>setPdfItems(p=>p.map(t=>({...t,_sel:e.target.checked})))} style={{marginRight:'5px'}}/>
+              Todos ({pdfItems.filter(t=>t._sel).length}/{pdfItems.length})
+            </label>
+            <div style={{display:'flex',alignItems:'center',gap:'6px',marginLeft:'auto'}}>
+              <span style={{fontSize:'0.72rem',color:'#888'}}>Fecha para todos:</span>
+              <input type="date" value={pdfItems.find(t=>t._sel)?._date||todayStr}
+                onChange={e=>setPdfItems(p=>p.map(t=>t._sel?{...t,_date:e.target.value}:t))}
+                style={{...S.input,padding:'4px 8px',fontSize:'0.78rem',width:'130px'}}/>
+            </div>
           </div>
-        ))}
-        {loading&&<div style={{color:'#444',fontSize:'0.82rem',fontStyle:'italic'}}>Procesando...</div>}
-        <div ref={bottomRef}/>
-      </div>
-      <div style={{padding:'10px 14px',borderTop:'1px solid #1a1a1a',display:'flex',gap:'8px',alignItems:'flex-end'}}>
-        <button onClick={()=>fileRef.current?.click()} style={{background:'#1a1a1a',border:'1px solid #222',color:'#666',padding:'10px 11px',borderRadius:'8px',cursor:'pointer',fontSize:'1rem',flexShrink:0}}>📄</button>
-        <input ref={fileRef} type="file" accept="application/pdf" onChange={handlePDF} style={{display:'none'}}/>
-        <textarea value={input} onChange={e=>setInput(e.target.value)}
-          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();isPDFMode?handleSendPDF():handleSend()}}}
-          placeholder={
-            waitingFor==='entity_type'?'deudor o acreedor...':
-            waitingFor==='project_choice'?'Nombre del proyecto...':
-            waitingFor==='project_category'?'Categoría del proyecto...':
-            waitingFor==='project_cotiz'?'Cotización dólar blue (ej: 1400)...':
-            isPDFMode?'Nro + categoría para editar, o "guardar"...':
-            '$14.000 pizza  o pegá varias líneas...'
-          }
-          rows={1} style={{flex:1,
-            background:waitingFor&&waitingFor!=='confirm'?'#1a1810':'#1a1a1a',
-            border:`1px solid ${waitingFor&&waitingFor!=='confirm'?'#3a3020':'#222'}`,
-            color:'#e8dcc8',padding:'10px 12px',borderRadius:'8px',fontSize:'0.88rem',resize:'none',minHeight:'42px',maxHeight:'120px',fontFamily:'Georgia,serif',outline:'none'}}/>
-        <button onClick={isPDFMode?handleSendPDF:handleSend} disabled={loading}
-          style={{...S.btnGold,flexShrink:0,opacity:loading?0.4:1,padding:'10px 18px',fontSize:'1.1rem'}}>›</button>
-      </div>
+          {/* Lista de items */}
+          <div style={{flex:1,overflowY:'auto',padding:'8px 10px',display:'flex',flexDirection:'column',gap:'4px'}}>
+            {pdfItems.map((t,i)=>(
+              <div key={t._key} style={{display:'flex',alignItems:'center',gap:'6px',padding:'7px 10px',background:t._sel?'#1a1a1a':'#111',borderRadius:'6px',border:'1px solid #222',opacity:t._sel?1:0.45}}>
+                <input type="checkbox" checked={t._sel} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_sel:e.target.checked}:x))} style={{flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:'0.8rem',color:'#ddd',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {t.description}{t.installment?<span style={{color:'#666',fontSize:'0.72rem'}}> ({t.installment})</span>:''}
+                  </div>
+                  <div style={{fontSize:'0.7rem',color:'#666',marginTop:'1px'}}>
+                    orig: {t._origDate}
+                  </div>
+                </div>
+                <div style={{fontSize:'0.82rem',color:t.currency==='USD'?'#c8a96e':'#c87070',flexShrink:0,minWidth:'70px',textAlign:'right'}}>
+                  {t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)}
+                </div>
+                <select value={t._cat} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_cat:e.target.value}:x))}
+                  style={{...S.input,padding:'3px 6px',fontSize:'0.72rem',width:'110px',background:'#111'}}>
+                  {categories.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+                <input type="date" value={t._date} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_date:e.target.value}:x))}
+                  style={{...S.input,padding:'3px 6px',fontSize:'0.72rem',width:'120px'}}/>
+              </div>
+            ))}
+          </div>
+          {/* Footer del panel */}
+          <div style={{padding:'10px 14px',borderTop:'1px solid #1a1a1a',display:'flex',gap:'8px'}}>
+            <button onClick={savePDF} disabled={loading||!pdfItems.some(t=>t._sel)}
+              style={{...S.btnGold,flex:1,opacity:(!pdfItems.some(t=>t._sel)||loading)?0.4:1}}>
+              ✓ Guardar seleccionados ({pdfItems.filter(t=>t._sel).length})
+            </button>
+            <button onClick={()=>setPdfItems(null)} style={{...S.btnGray}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {/* CHAT NORMAL */}
+      {!pdfItems&&(<>
+        <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:'12px'}}>
+          {messages.map((m,i)=>(
+            <div key={i} style={{display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
+              <div style={{maxWidth:'88%',padding:'10px 14px',borderRadius:'12px',fontSize:'0.88rem',lineHeight:1.55,whiteSpace:'pre-wrap',
+                background:m.role==='user'?'#1e1a10':'#1a1a1a',
+                border:m.role==='user'?'1px solid #3a3020':'1px solid #222',
+                color:m.role==='user'?'#c8a96e':'#e8dcc8'}}>{m.text}</div>
+              {m.txs&&m.role==='assistant'&&(
+                <button onClick={handleConfirm} style={{...S.btnGold,marginTop:'8px'}}>✓ Confirmar y guardar</button>
+              )}
+            </div>
+          ))}
+          {loading&&<div style={{color:'#444',fontSize:'0.82rem',fontStyle:'italic'}}>Procesando...</div>}
+          <div ref={bottomRef}/>
+        </div>
+        <div style={{padding:'10px 14px',borderTop:'1px solid #1a1a1a',display:'flex',gap:'8px',alignItems:'flex-end'}}>
+          <button onClick={()=>fileRef.current?.click()} style={{background:'#1a1a1a',border:'1px solid #222',color:'#666',padding:'10px 11px',borderRadius:'8px',cursor:'pointer',fontSize:'1rem',flexShrink:0}}>📄</button>
+          <input ref={fileRef} type="file" accept="application/pdf" onChange={handlePDF} style={{display:'none'}}/>
+          <textarea value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSend()}}}
+            placeholder={
+              waitingFor==='entity_type'?'deudor o acreedor...':
+              waitingFor==='project_choice'?'Nombre del proyecto...':
+              waitingFor==='project_category'?'Categoría del proyecto...':
+              waitingFor==='project_cotiz'?'Cotización dólar blue (ej: 1400)...':
+              '$14.000 pizza  o pegá varias líneas...'
+            }
+            rows={1} style={{flex:1,
+              background:waitingFor&&waitingFor!=='confirm'?'#1a1810':'#1a1a1a',
+              border:`1px solid ${waitingFor&&waitingFor!=='confirm'?'#3a3020':'#222'}`,
+              color:'#e8dcc8',padding:'10px 12px',borderRadius:'8px',fontSize:'0.88rem',resize:'none',minHeight:'42px',maxHeight:'120px',fontFamily:'Georgia,serif',outline:'none'}}/>
+          <button onClick={handleSend} disabled={loading}
+            style={{...S.btnGold,flexShrink:0,opacity:loading?0.4:1,padding:'10px 18px',fontSize:'1.1rem'}}>›</button>
+        </div>
+      </>)}
     </div>
   )
 }
@@ -655,6 +744,8 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const [newIng,setNewIng]=useState({description:'',amount:''})
   const [editingId,setEditingId]=useState(null)
   const [editVals,setEditVals]=useState({})
+  const [selectMode,setSelectMode]=useState(false)
+  const [selectedTxs,setSelectedTxs]=useState(new Set())
   const byRecent=(a,b)=>{
     const d=new Date(b.date)-new Date(a.date)
     if(d!==0)return d
@@ -691,6 +782,19 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const next=()=>{const d=new Date(year,month+1);setSelectedMonth({month:d.getMonth(),year:d.getFullYear()})}
   const handleExport=()=>exportToExcel({transactions,ingresos,usdMovements,categories,month,year})
   const handleExportPDF=()=>exportToPDF({transactions,ingresos,categories,month,year})
+
+  // ── Selección múltiple para borrado masivo ─────────────────────────
+  const toggleSelectMode=()=>{setSelectMode(s=>!s);setSelectedTxs(new Set())}
+  const toggleTx=id=>setSelectedTxs(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n})
+  const allSelected=mTxs.length>0&&mTxs.every(t=>selectedTxs.has(t.id))
+  const toggleAll=()=>setSelectedTxs(allSelected?new Set():new Set(mTxs.map(t=>t.id)))
+  const deleteSelected=async()=>{
+    if(!window.confirm(`¿Borrar ${selectedTxs.size} gasto${selectedTxs.size!==1?'s':''}?\n\nSi estaban vinculados a la caja USD, el vínculo también se borra.\n\nEsta acción no se puede deshacer.`))return
+    for(const t of mTxs.filter(t=>selectedTxs.has(t.id))){
+      await deleteLinked('transactions',t,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
+    }
+    setSelectedTxs(new Set())
+  }
   return (
     <div style={{padding:'20px'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px'}}>
@@ -729,6 +833,21 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
         </div>
       </>)}
       {tab==='gastos'&&(<>
+        {/* Barra de selección múltiple */}
+        <div style={{display:'flex',gap:'8px',marginBottom:'10px',alignItems:'center'}}>
+          <button onClick={toggleSelectMode} style={{...S.btnGray,padding:'6px 12px',fontSize:'0.7rem',color:selectMode?'#c8a96e':'#666',borderColor:selectMode?'#c8a96e':'#2a2a2a'}}>
+            {selectMode?'✕ Cancelar selección':'☐ Seleccionar'}
+          </button>
+          {selectMode&&mTxs.length>0&&(<>
+            <button onClick={toggleAll} style={{...S.btnGray,padding:'6px 10px',fontSize:'0.7rem'}}>{allSelected?'Ninguno':'Todos'}</button>
+            {selectedTxs.size>0&&(
+              <button onClick={deleteSelected} style={{...S.btnGray,padding:'6px 12px',fontSize:'0.7rem',color:'#c87070',borderColor:'#3a1e1e',fontWeight:'bold'}}>
+                🗑 Borrar {selectedTxs.size}
+              </button>
+            )}
+            <span style={{color:'#555',fontSize:'0.72rem',marginLeft:'auto'}}>{selectedTxs.size}/{mTxs.length} seleccionados</span>
+          </>)}
+        </div>
         {mTxs.length===0&&<div style={{color:'#444',textAlign:'center',padding:'30px',fontSize:'0.88rem'}}>Sin gastos registrados</div>}
         {mTxs.map((t,i)=>editingId===t.id?(
           <EditForm key={t.id||i}
@@ -745,15 +864,20 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
             values={editVals} onChange={(k,v)=>setEditVals({...editVals,[k]:v})}
             onSave={()=>saveEditTx(t)} onCancel={cancelEdit}/>
         ):(
-          <div key={t.id||i} style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div key={t.id||i} onClick={selectMode?()=>toggleTx(t.id):undefined}
+            style={{...S.card,marginBottom:'8px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:selectMode?'pointer':'default',background:selectedTxs.has(t.id)?'#1e1a10':'#1a1a1a',borderColor:selectedTxs.has(t.id)?'#3a3020':'#222',transition:'background 0.15s'}}>
+            {selectMode&&(
+              <input type="checkbox" checked={selectedTxs.has(t.id)} onChange={()=>toggleTx(t.id)} onClick={e=>e.stopPropagation()}
+                style={{marginRight:'8px',width:'15px',height:'15px',flexShrink:0,accentColor:'#c8a96e',cursor:'pointer'}}/>
+            )}
             <div style={{flex:1,minWidth:0,marginRight:'10px'}}>
               <div style={{fontSize:'0.7rem',color:'#555',marginBottom:'2px'}}>{t.category} · {t.date}</div>
               <div style={{fontSize:'0.88rem',color:'#ddd',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.description||'—'}</div>
             </div>
             <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
               <span style={{color:'#c87070',fontSize:'0.88rem'}}>{fmt(t.amount)}</span>
-              <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>
-              <button onClick={()=>delTx(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>
+              {!selectMode&&<button onClick={()=>startEdit(t)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',padding:'4px'}}>✎</button>}
+              {!selectMode&&<button onClick={()=>delTx(t)} style={{background:'none',border:'none',color:'#444',cursor:'pointer',padding:'4px'}}>✕</button>}
             </div>
           </div>
         ))}
