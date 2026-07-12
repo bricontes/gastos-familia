@@ -337,6 +337,8 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
   // waitingFor: null | 'confirm' | 'entity_type' | 'project_choice' | 'project_category' | 'project_cotiz'
   const [waitingFor,setWaitingFor]=useState(null)
   const [pdfItems,setPdfItems]=useState(null)  // null = sin PDF abierto; array = panel de revisión activo
+  const [pdfObraCotiz,setPdfObraCotiz]=useState('')  // cotización para items Obra del PDF
+  const [pdfObraProject,setPdfObraProject]=useState(null)  // proyecto al que asignar los items Obra
   const [lastImportIds,setLastImportIds]=useState(()=>{
     try{return JSON.parse(localStorage.getItem('last_pdf_import')||'[]')}catch{return[]}
   })
@@ -587,6 +589,9 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
         _origDate:t.date||'',     // para referencia visual
       }))
       setPdfItems(items)
+      // Pre-asignar el proyecto para items de Obra si hay uno solo activo
+      if(activeProjects.length===1) setPdfObraProject(activeProjects[0])
+      else if(activeProjects.length>1) setPdfObraProject(activeProjects[0])
       addMsg('assistant',`Encontré ${parsed.length} consumos de ${file.name}. Revisalos en el panel de abajo — la fecha ya quedó asignada a hoy. Cambiá categorías o fechas si necesitás y luego guardá.`)
     }catch(err){addMsg('assistant',`Error al leer el PDF: ${err.message}`)}
     setLoading(false);e.target.value=''
@@ -599,6 +604,8 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     setLoading(true)
     const pesoItems=selected.filter(t=>t.currency!=='USD'||!t.currency)
     const usdItems=selected.filter(t=>t.currency==='USD')
+    const cotiz=parseFloat((pdfObraCotiz||'').replace(',','.'))
+    const obraItems=pesoItems.filter(t=>(t._cat||'Otros')==='Obra')
     const toInsert=pesoItems.map(t=>({
       date:t._date,
       amount:Math.abs(t.amount||0),
@@ -611,12 +618,30 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
       const u=await db.insertUSD({date:t._date,usd100:-Math.abs(t.amount||0),usd_cambio:0,description:t.description||''})
       setUSDMov(p=>[...p,u])
     }
-    // Guardar IDs para poder deshacer
+    // Si hay items de Obra con cotización → crear también los project_movements en USD
+    if(obraItems.length&&cotiz>0&&pdfObraProject){
+      for(const t of obraItems){
+        const monto=Math.abs(t.amount||0)
+        const mv={
+          project_id:pdfObraProject.id,
+          date:t._date,
+          category:'Materiales',
+          description:`${t.description||''}${t.installment?' ('+t.installment+')':''}`.trim(),
+          amount:parseFloat((monto/cotiz).toFixed(2)),
+          currency:'USD',
+          exchange_rate:cotiz,
+        }
+        const s=await db.insertProjectMovement(mv)
+        setProjectMov(p=>[...p,s||mv])
+      }
+    }
     const ids=(saved||[]).map(t=>t.id).filter(Boolean)
     localStorage.setItem('last_pdf_import',JSON.stringify(ids))
     setLastImportIds(ids)
-    setLoading(false);setPdfItems(null)
-    addMsg('assistant',`✓ Se guardaron ${selected.length} consumos con fecha ${todayStr}.${usdItems.length?` (${usdItems.length} en USD → caja USD)`:''}  \nSi necesitás deshacer esta importación, tocá el botón "Deshacer PDF" que aparece en el encabezado.`)
+    setLoading(false);setPdfItems(null);setPdfObraCotiz('')
+    const obraMsg=obraItems.length&&cotiz>0?` (${obraItems.length} items de Obra registrados en ${pdfObraProject?.name||'proyecto'} @ $${cotiz})`
+      :obraItems.length&&!cotiz?' ⚠️ Nota: había items de Obra pero no pusiste cotización, así que NO se registraron los costos en USD en el proyecto. Podés agregarlos manualmente desde Proyectos.':''
+    addMsg('assistant',`✓ Se guardaron ${selected.length} consumos.${obraMsg}\nSi necesitás deshacer esta importación, tocá el botón "↩ Deshacer PDF".`)
   }
 
   const undoLastImport=async()=>{
@@ -685,6 +710,31 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
             ))}
           </div>
           {/* Footer del panel */}
+          {(()=>{
+            const obraSelected=pdfItems.filter(t=>t._sel&&(t._cat||'Otros')==='Obra')
+            return obraSelected.length>0?(
+              <div style={{padding:'8px 14px',borderTop:'1px solid #1a1a1a',background:'#141f14',flexShrink:0}}>
+                <div style={{fontSize:'0.72rem',color:'#9ec89e',marginBottom:'6px'}}>
+                  ⚒ {obraSelected.length} item{obraSelected.length>1?'s':''} categorizados como <strong>Obra</strong> — para registrar también el costo en USD en el proyecto, ingresá la cotización:
+                </div>
+                <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+                  {activeProjects.length>1&&(
+                    <select value={pdfObraProject?.id||''} onChange={e=>setPdfObraProject(activeProjects.find(p=>p.id===e.target.value)||null)}
+                      style={{...S.input,padding:'5px 9px',fontSize:'0.78rem',width:'140px',background:'#111'}}>
+                      {activeProjects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  )}
+                  {activeProjects.length===1&&(
+                    <span style={{fontSize:'0.78rem',color:'#6e9e6e',padding:'5px 0'}}>→ {activeProjects[0].name}</span>
+                  )}
+                  <input type="number" placeholder="Cotización $ (ej: 1460)" value={pdfObraCotiz}
+                    onChange={e=>setPdfObraCotiz(e.target.value)}
+                    style={{...S.input,padding:'5px 9px',fontSize:'0.78rem',width:'180px'}}/>
+                  {!pdfObraCotiz&&<span style={{fontSize:'0.7rem',color:'#555'}}>(opcional — dejá vacío para no registrar en proyecto)</span>}
+                </div>
+              </div>
+            ):null
+          })()}
           <div style={{padding:'10px 14px',borderTop:'1px solid #1a1a1a',display:'flex',gap:'8px'}}>
             <button onClick={savePDF} disabled={loading||!pdfItems.some(t=>t._sel)}
               style={{...S.btnGold,flex:1,opacity:(!pdfItems.some(t=>t._sel)||loading)?0.4:1}}>
