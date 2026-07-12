@@ -153,7 +153,11 @@ Tipos posibles:
 
 Reglas generales:
 - Lo primero es chequear si el texto menciona el nombre de una entidad o de un proyecto existente — esos casos van por type=entity_movement o type=project_gasto, NO como gasto/ingreso genérico.
-- Sin "+" adelante del monto = egreso/salida. Con "+" adelante = ingreso/entrada. Esta misma regla de signo aplica también dentro de entity_movement para decidir si "amount" es positivo o negativo.
+- REGLA DEL SIGNO "+": si el texto contiene "+" ANTES del signo "$" o del monto (incluso si hay palabras en el medio, ej "salidas + $50.600"), eso es SIEMPRE un INGRESO (type="ingreso"), SIN EXCEPCIÓN. Esta regla tiene prioridad ABSOLUTA sobre cualquier coincidencia con nombre de categoría. Ejemplos:
+  "salidas + $50.600" → type="ingreso", amount=50600, description="salidas" ← NO importa que "Salidas" sea una categoría de gasto; el "+" manda.
+  "+ $2.272.400 sueldo bri" → type="ingreso", amount=2272400, description="Sueldo Bri"
+  "$14.000 pizza" (sin +) → type="gasto", category="Comida"
+- El mismo criterio de signo aplica dentro de entity_movement para decidir si "amount" es positivo (entró plata) o negativo (salió plata).
 - Resto de gastos sin entidad ni proyecto → type=gasto con category de la lista de categorías normales.
 
 Categorías para gastos normales: ${categories.join(', ')}`
