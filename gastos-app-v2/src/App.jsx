@@ -580,6 +580,9 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
       if(!parsed.length){addMsg('assistant','No encontré consumos en el PDF.');setLoading(false);e.target.value='';return}
       // Inicializamos los items con fecha = HOY (no la del resumen).
       // Se guarda la fecha original solo como referencia visual.
+      // Pre-asignar el proyecto para items de Obra (si hay al menos uno activo, tomamos el primero)
+      const defaultProject=activeProjects[0]||null
+      const defaultProjCats=defaultProject?.categories||DEFAULT_PROJECT_CATS
       const items=parsed.map((t,i)=>({
         ...t,
         _key:i,
@@ -587,11 +590,10 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
         _date:todayStr,           // FECHA DEL DÍA DE CARGA, no la del resumen
         _cat:t.category||'Otros', // categoría editable
         _origDate:t.date||'',     // para referencia visual
+        _projCat:(t.category||'')==='Obra'?defaultProjCats[0]:undefined, // categoría dentro del proyecto (solo Obra)
       }))
       setPdfItems(items)
-      // Pre-asignar el proyecto para items de Obra si hay uno solo activo
-      if(activeProjects.length===1) setPdfObraProject(activeProjects[0])
-      else if(activeProjects.length>1) setPdfObraProject(activeProjects[0])
+      if(defaultProject) setPdfObraProject(defaultProject)
       addMsg('assistant',`Encontré ${parsed.length} consumos de ${file.name}. Revisalos en el panel de abajo — la fecha ya quedó asignada a hoy. Cambiá categorías o fechas si necesitás y luego guardá.`)
     }catch(err){addMsg('assistant',`Error al leer el PDF: ${err.message}`)}
     setLoading(false);e.target.value=''
@@ -620,12 +622,13 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     }
     // Si hay items de Obra con cotización → crear también los project_movements en USD
     if(obraItems.length&&cotiz>0&&pdfObraProject){
+      const projCatsForSave=pdfObraProject?.categories||DEFAULT_PROJECT_CATS
       for(const t of obraItems){
         const monto=Math.abs(t.amount||0)
         const mv={
           project_id:pdfObraProject.id,
           date:t._date,
-          category:'Materiales',
+          category:t._projCat||projCatsForSave[0],
           description:`${t.description||''}${t.installment?' ('+t.installment+')':''}`.trim(),
           amount:parseFloat((monto/cotiz).toFixed(2)),
           currency:'USD',
@@ -685,6 +688,9 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
             </div>
           </div>
           {/* Lista de items */}
+          {(()=>{
+            const projCatsForPdf=pdfObraProject?.categories||DEFAULT_PROJECT_CATS
+            return (
           <div style={{flex:1,overflowY:'auto',padding:'8px 10px',display:'flex',flexDirection:'column',gap:'4px'}}>
             {pdfItems.map((t,i)=>(
               <div key={t._key} style={{display:'flex',alignItems:'center',gap:'6px',padding:'7px 10px',background:t._sel?'#1a1a1a':'#111',borderRadius:'6px',border:'1px solid #222',opacity:t._sel?1:0.45}}>
@@ -700,15 +706,24 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
                 <div style={{fontSize:'0.82rem',color:t.currency==='USD'?'#c8a96e':'#c87070',flexShrink:0,minWidth:'70px',textAlign:'right'}}>
                   {t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)}
                 </div>
-                <select value={t._cat} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_cat:e.target.value}:x))}
+                <select value={t._cat} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_cat:e.target.value,_projCat:e.target.value==='Obra'?(x._projCat||projCatsForPdf[0]):x._projCat}:x))}
                   style={{...S.input,padding:'3px 6px',fontSize:'0.72rem',width:'110px',background:'#111'}}>
                   {categories.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
+                {t._cat==='Obra'&&(
+                  <select value={t._projCat||projCatsForPdf[0]} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_projCat:e.target.value}:x))}
+                    title="Categoría dentro del proyecto"
+                    style={{...S.input,padding:'3px 6px',fontSize:'0.72rem',width:'130px',background:'#111',borderColor:'#2a3a2a'}}>
+                    {projCatsForPdf.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                )}
                 <input type="date" value={t._date} onChange={e=>setPdfItems(p=>p.map((x,j)=>j===i?{...x,_date:e.target.value}:x))}
                   style={{...S.input,padding:'3px 6px',fontSize:'0.72rem',width:'120px'}}/>
               </div>
             ))}
           </div>
+            )
+          })()}
           {/* Footer del panel */}
           {(()=>{
             const obraSelected=pdfItems.filter(t=>t._sel&&(t._cat||'Otros')==='Obra')
@@ -719,7 +734,12 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
                 </div>
                 <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
                   {activeProjects.length>1&&(
-                    <select value={pdfObraProject?.id||''} onChange={e=>setPdfObraProject(activeProjects.find(p=>p.id===e.target.value)||null)}
+                    <select value={pdfObraProject?.id||''} onChange={e=>{
+                        const newProj=activeProjects.find(p=>p.id===e.target.value)||null
+                        const newCats=newProj?.categories||DEFAULT_PROJECT_CATS
+                        setPdfObraProject(newProj)
+                        setPdfItems(p=>p.map(x=>x._cat==='Obra'?{...x,_projCat:newCats[0]}:x))
+                      }}
                       style={{...S.input,padding:'5px 9px',fontSize:'0.78rem',width:'140px',background:'#111'}}>
                       {activeProjects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
