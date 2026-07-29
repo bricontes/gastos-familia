@@ -153,10 +153,16 @@ Tipos posibles:
 
 Reglas generales:
 - Lo primero es chequear si el texto menciona el nombre de una entidad o de un proyecto existente — esos casos van por type=entity_movement o type=project_gasto, NO como gasto/ingreso genérico.
-- REGLA DEL SIGNO "+": si el texto contiene "+" ANTES del signo "$" o del monto (incluso si hay palabras en el medio, ej "salidas + $50.600"), eso es SIEMPRE un INGRESO (type="ingreso"), SIN EXCEPCIÓN. Esta regla tiene prioridad ABSOLUTA sobre cualquier coincidencia con nombre de categoría. Ejemplos:
-  "salidas + $50.600" → type="ingreso", amount=50600, description="salidas" ← NO importa que "Salidas" sea una categoría de gasto; el "+" manda.
-  "+ $2.272.400 sueldo bri" → type="ingreso", amount=2272400, description="Sueldo Bri"
-  "$14.000 pizza" (sin +) → type="gasto", category="Comida"
+- REGLA DEL SIGNO "+": si el texto contiene "+" ANTES del signo "$" o del monto (incluso si hay palabras en el medio, ej "salidas + $50.600"), hay que distinguir DOS casos:
+  a) REINTEGRO DENTRO DE UNA CATEGORÍA DE GASTO: si el "+" acompaña un monto junto al nombre de una categoría de gasto EXISTENTE en "Categorías para gastos normales" (case-insensitive), EXCEPTO "Cambio USD" (que sigue la regla de tipo usd) — y el texto NO usa palabras de ingreso real como "sueldo", "salario", "honorarios", "haberes", "alquiler", "renta", "cobré alquiler" — entonces NO es un ingreso nuevo, es plata que te devolvieron de algo que ya pagaste vos (ej: pagaste la salida completa de un grupo con tu tarjeta y después te devuelven la parte de cada uno). Eso se registra como { "type": "gasto", "amount": -monto (NEGATIVO), "category": categoría coincidente, "description": "Reintegro" + lo que agregue el texto } para que reste del total gastado en esa categoría, no como ingreso aparte.
+     Ejemplos:
+     "salidas + $50.600" → type="gasto", category="Salidas", amount=-50600, description="Reintegro"
+     "+ $30.000 comida" → type="gasto", category="Comida", amount=-30000, description="Reintegro"
+     "+15000 delivery me devolvieron la mitad" → type="gasto", category="Delivery", amount=-15000, description="Reintegro - me devolvieron la mitad"
+  b) INGRESO REAL: en cualquier otro caso con "+" antes del monto — sueldo, honorarios, alquiler, cobros, adelantos, ajustes, o cuando el texto no coincide con ninguna categoría de gasto existente — es SIEMPRE type="ingreso". Ejemplos:
+     "+ $2.272.400 sueldo bri" → type="ingreso", amount=2272400, description="Sueldo Bri"
+     "+ $300.000 alquiler depto" → type="ingreso", amount=300000, description="Alquiler depto"
+     "$14.000 pizza" (sin +) → type="gasto", category="Comida"
 - El mismo criterio de signo aplica dentro de entity_movement para decidir si "amount" es positivo (entró plata) o negativo (salió plata).
 - Resto de gastos sin entidad ni proyecto → type=gasto con category de la lista de categorías normales.
 
