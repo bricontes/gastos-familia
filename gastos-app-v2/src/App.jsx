@@ -447,6 +447,7 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
     if(t.type==='ingreso')return `💰 Ingreso: ${fmt(t.amount)} — ${t.description}`
     if(t.type==='entity_movement')return `${t.amount>=0?'💵':'➖'} ${t.entity_name}: ${t.amount>=0?'+':''}${t.amount} ${t.currency}${t.description?' — '+t.description:''}`
     if(t.type==='project_gasto')return `⚒ ${t.project_name||'Proyecto'}${t.currency==='USD'?' (USD directo)':' (pesos→USD)'}: ${t.currency==='USD'?fmtUsd(t.amount):fmt(t.amount)} — ${t.description}${t.category?' ['+t.category+']':''}`
+    if(t.type==='gasto'&&(t.amount||0)<0)return `↩️ Reintegro en ${t.category}: ${fmt(t.amount)}${t.description?' — '+t.description:''}`
     return `📌 ${t.category}: ${fmt(t.amount)}${t.description?' — '+t.description:''}`
   }).join('\n')
 
