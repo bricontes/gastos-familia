@@ -2,10 +2,13 @@
 // Envía el resumen del mes anterior a Brian y en copia a Anita.
 //
 // Variables de entorno necesarias en Netlify:
-//   VITE_SUPABASE_URL     → la URL de tu proyecto Supabase
+//   VITE_SUPABASE_URL      → la URL de tu proyecto Supabase
 //   VITE_SUPABASE_ANON_KEY → la anon key de Supabase
-//   RESEND_API_KEY         → la API key de Resend (resend.com)
-//   NOTIFICATION_EMAIL     → el mail de Brian
+//   GMAIL_USER              → tu mail de Gmail (el que envía el reporte)
+//   GMAIL_APP_PASSWORD      → contraseña de aplicación de 16 caracteres (Google Account → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones)
+//   NOTIFICATION_EMAIL      → el mail de Brian (destinatario principal)
+
+import nodemailer from 'nodemailer'
 
 export const config = {
   schedule: '0 10 1 * *'
@@ -54,25 +57,21 @@ export default async function handler(req) {
 
     const html = buildHTML({ monthName: MONTHS[prevM], year: prevY, totalIngresos, totalGastos, balance, usdTotal, byCategory, ings })
 
-    const sendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      },
-      body: JSON.stringify({
-        from: 'Gastos Familia <onboarding@resend.dev>',
-        to:  [process.env.NOTIFICATION_EMAIL],
-        cc:  [ANITA_EMAIL],
-        subject: `📊 Resumen ${MONTHS[prevM]} ${prevY} — Gastos Familia`,
-        html,
-      })
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      }
     })
 
-    if (!sendRes.ok) {
-      const err = await sendRes.text()
-      throw new Error(`Resend: ${sendRes.status} — ${err}`)
-    }
+    await transporter.sendMail({
+      from: `Gastos Familia <${process.env.GMAIL_USER}>`,
+      to: process.env.NOTIFICATION_EMAIL,
+      cc: ANITA_EMAIL,
+      subject: `📊 Resumen ${MONTHS[prevM]} ${prevY} — Gastos Familia`,
+      html,
+    })
 
     console.log(`✓ Resumen ${MONTHS[prevM]} ${prevY} enviado.`)
     return new Response(JSON.stringify({ ok: true }), { status: 200 })
