@@ -371,7 +371,8 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
           // no se mezcla con gastos en pesos.
           usds.push({date:gDate,usd100:-Math.abs(t.amount||0),usd_cambio:0,description:t.description||'',exchange_rate:null,peso_amount:null})
         } else {
-          gastos.push({date:gDate,amount:t.amount||0,category:t.category,description:t.description||''})
+          const validCat=categories.includes(t.category)?t.category:'Otros'
+          gastos.push({date:gDate,amount:t.amount||0,category:validCat,description:t.description||''})
         }
       }
       else if(t.type==='ingreso'){
@@ -584,15 +585,20 @@ function ChatView({categories,activeEntities,activeProjects,setTransactions,setI
       // Pre-asignar el proyecto para items de Obra (si hay al menos uno activo, tomamos el primero)
       const defaultProject=activeProjects[0]||null
       const defaultProjCats=defaultProject?.categories||DEFAULT_PROJECT_CATS
-      const items=parsed.map((t,i)=>({
-        ...t,
-        _key:i,
-        _sel:true,                // seleccionado por defecto
-        _date:todayStr,           // FECHA DEL DÍA DE CARGA, no la del resumen
-        _cat:t.category||'Otros', // categoría editable
-        _origDate:t.date||'',     // para referencia visual
-        _projCat:(t.category||'')==='Obra'?defaultProjCats[0]:undefined, // categoría dentro del proyecto (solo Obra)
-      }))
+      const items=parsed.map((t,i)=>{
+        // Si Gemini devuelve algo que no es una categoría real (ej: el nombre del comercio
+        // tal cual, "COTO DIGITAL", "MERPAGO"), lo mandamos a "Otros" en vez de dejarlo colar.
+        const validCat=categories.includes(t.category)?t.category:'Otros'
+        return {
+          ...t,
+          _key:i,
+          _sel:true,                // seleccionado por defecto
+          _date:todayStr,           // FECHA DEL DÍA DE CARGA, no la del resumen
+          _cat:validCat,            // categoría editable
+          _origDate:t.date||'',     // para referencia visual
+          _projCat:validCat==='Obra'?defaultProjCats[0]:undefined, // categoría dentro del proyecto (solo Obra)
+        }
+      })
       setPdfItems(items)
       if(defaultProject) setPdfObraProject(defaultProject)
       addMsg('assistant',`Encontré ${parsed.length} consumos de ${file.name}. Revisalos en el panel de abajo — la fecha ya quedó asignada a hoy. Cambiá categorías o fechas si necesitás y luego guardá.`)
@@ -827,7 +833,8 @@ function MonthlyView({transactions,setTransactions,ingresos,setIngresos,usdMovem
   const totalG=mTxs.reduce((s,t)=>s+(t.amount||0),0)
   const totalI=mIngs.reduce((s,t)=>s+(t.amount||0),0)
   const bal=totalI-totalG
-  const byCat=categories.reduce((acc,cat)=>{acc[cat]=mTxs.filter(t=>t.category===cat).reduce((s,t)=>s+(t.amount||0),0);return acc},{})
+  const byCat={}
+  mTxs.forEach(t=>{byCat[t.category]=(byCat[t.category]||0)+(t.amount||0)})
   const delTx=async t=>deleteLinked('transactions',t,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   const delIng=async i=>deleteLinked('ingresos',i,{setTransactions,setIngresos,setUSDMov,setEntityMov,setProjectMov})
   const startEdit=row=>{setEditingId(row.id);setEditVals({date:row.date,description:row.description||'',category:row.category,amount:row.amount})}
