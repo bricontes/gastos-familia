@@ -35,10 +35,11 @@ export function exportToExcel({ transactions, ingresos, usdMovements, categories
   const monthTxs  = transactions.filter(t => { const d = new Date(t.date); return d.getMonth()===month && d.getFullYear()===year })
   const monthIngs = ingresos.filter(t    => { const d = new Date(t.date); return d.getMonth()===month && d.getFullYear()===year })
 
-  const byCategory = categories.reduce((acc, cat) => {
-    acc[cat] = monthTxs.filter(t => t.category===cat).reduce((s,t) => s+t.amount, 0)
-    return acc
-  }, {})
+  // Se agrupa por la categoría real de cada gasto (no solo por las categorías conocidas),
+  // para que ningún gasto quede afuera del detalle aunque tenga una categoría "sucia"
+  // (ej: quedó con el nombre del comercio en vez de una categoría válida).
+  const byCategory = {}
+  monthTxs.forEach(t => { byCategory[t.category] = (byCategory[t.category] || 0) + (t.amount || 0) })
 
   const totalGastos   = monthTxs.reduce((s,t)=>s+t.amount,0)
   const totalIngresos = monthIngs.reduce((s,t)=>s+t.amount,0)
@@ -112,10 +113,11 @@ export function exportToPDF({ transactions, ingresos, categories, month, year })
   const monthName = MONTHS[month]
   const monthTxs  = transactions.filter(t => { const d = new Date(t.date); return d.getMonth()===month && d.getFullYear()===year })
   const monthIngs = ingresos.filter(t    => { const d = new Date(t.date); return d.getMonth()===month && d.getFullYear()===year })
-  const byCategory = categories.reduce((acc, cat) => {
-    acc[cat] = monthTxs.filter(t => t.category===cat).reduce((s,t) => s+t.amount, 0)
-    return acc
-  }, {})
+  // Se agrupa por la categoría real de cada gasto (no solo por las categorías conocidas),
+  // para que ningún gasto quede afuera del detalle aunque tenga una categoría "sucia"
+  // (ej: quedó con el nombre del comercio en vez de una categoría válida).
+  const byCategory = {}
+  monthTxs.forEach(t => { byCategory[t.category] = (byCategory[t.category] || 0) + (t.amount || 0) })
   const totalGastos   = monthTxs.reduce((s,t)=>s+t.amount,0)
   const totalIngresos = monthIngs.reduce((s,t)=>s+t.amount,0)
   const balance = totalIngresos - totalGastos
